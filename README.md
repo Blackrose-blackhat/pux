@@ -3,7 +3,7 @@
 
 </p>
 
-<h1 align="center">pux</h1>
+
 
 <p align="center">
   <strong>Package CI failures into AI-ready local context.</strong>
