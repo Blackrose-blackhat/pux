@@ -1,12 +1,9 @@
 <p align="center">
-  <pre align="center">
-   /\_/\
-  ( o.o )~
-   > ^ <
-  </pre>
+  <img width="450" height="182" alt="image" src="https://github.com/user-attachments/assets/eaf7ba19-4031-470a-a64d-148d26bedf36" />
+
 </p>
 
-<h1 align="center">pux</h1>
+
 
 <p align="center">
   <strong>Pux tells you why your build failed before you open GitHub.</strong>
