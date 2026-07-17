@@ -3,3 +3,4 @@ dist/
 .pux/
 .ai-context/
 coverage/
+test-pet.tsx

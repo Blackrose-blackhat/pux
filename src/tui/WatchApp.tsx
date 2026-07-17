@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
 import { generateFailureContext } from "../context/generate.js";
 import { getWatchSnapshot, type GitHubJob, type WatchSnapshot } from "../github/client.js";
+import { Pet, type PetMood } from "./Pet.js";
 
 type ContextStatus = "idle" | "generating" | "written" | "error";
 
@@ -47,13 +48,20 @@ export function WatchApp() {
       .catch(() => setContextStatus("error"));
   }, [snapshot]);
 
+  const mood: PetMood =
+    snapshot.kind === "run" && snapshot.run.status === "completed" && snapshot.run.conclusion === "failure" ? "sad" :
+    snapshot.kind === "run" && snapshot.run.status === "completed" ? "happy" :
+    snapshot.kind === "run" ? "watching" :
+    "idle";
+
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box marginBottom={1}>
-        <Text color="cyan" bold>
-          pux
-        </Text>
-        <Text dimColor> · CI context, ready for your AI</Text>
+        <Pet mood={mood} />
+        <Box flexDirection="column" marginLeft={1} justifyContent="center">
+          <Text color="cyan" bold>pux</Text>
+          <Text dimColor>CI context, ready for your AI</Text>
+        </Box>
       </Box>
       <Status snapshot={snapshot} contextStatus={contextStatus} agentInstructions={agentInstructions} />
       <Box marginTop={1}><Text dimColor>Refreshes every 3s · press q to quit</Text></Box>
