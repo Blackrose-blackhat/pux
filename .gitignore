@@ -4,3 +4,4 @@ dist/
 .ai-context/
 coverage/
 test-pet.tsx
+src/__tests__/

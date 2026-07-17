@@ -51,8 +51,12 @@ async function appendInstruction(path: string, label: string, result: AgentInstr
   }
 
   const separator = existing.trim().length > 0 ? "\n\n" : "";
-  await writeFile(path, `${existing.trimEnd()}${separator}${markdownInstruction}\n`, "utf8");
-  result.added.push(label);
+  try {
+    await writeFile(path, `${existing.trimEnd()}${separator}${markdownInstruction}\n`, "utf8");
+    result.added.push(label);
+  } catch {
+    // File may be read-only or locked — skip gracefully.
+  }
 }
 
 async function hasDirectory(path: string): Promise<boolean> {
