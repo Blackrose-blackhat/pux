@@ -1,7 +1,7 @@
 {
-  "name": "pux",
-  "version": "1.0.0",
-  "description": "Package CI failures into AI-ready local context.",
+  "name": "pux.sh",
+  "version": "0.1.0",
+  "description": "Pux tells you why your build failed before you open GitHub.",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
@@ -14,11 +14,25 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prepublishOnly": "npm run build"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["ci", "github-actions", "devtools", "cli", "ai-context", "developer-experience"],
+  "author": "Blackrose-blackhat",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Blackrose-blackhat/pux.git"
+  },
+  "homepage": "https://github.com/Blackrose-blackhat/pux",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "commander": "^15.0.0",
     "ink": "^7.1.1",

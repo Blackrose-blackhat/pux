@@ -9,26 +9,112 @@
 <h1 align="center">pux</h1>
 
 <p align="center">
-  <strong>Package CI failures into AI-ready local context.</strong>
+  <strong>Pux tells you why your build failed before you open GitHub.</strong>
 </p>
 
 <p align="center">
-  <a href="#installation">Installation</a> &bull;
-  <a href="#how-it-works">How It Works</a> &bull;
-  <a href="#commands">Commands</a> &bull;
-  <a href="#agent-integrations">Agent Integrations</a> &bull;
-  <a href="#project-structure">Project Structure</a>
+  <a href="#what-is-pux">What</a> &bull;
+  <a href="#how-it-works">How</a> &bull;
+  <a href="#installation">Install</a> &bull;
+  <a href="#usage">Usage</a> &bull;
+  <a href="ROADMAP.md">Roadmap</a> &bull;
+  <a href="ARCHITECTURE.md">Architecture</a> &bull;
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
 
 ## What is Pux?
 
-Pux watches your GitHub Actions runs in real time from your terminal. When CI fails, it automatically downloads the failed logs, collects relevant repo context (diffs, configs, workflow files), and writes a structured `.ai-context/failure.md` file that any AI coding agent can read to diagnose and fix the issue.
+Pux is an ambient developer companion that lives in your macOS menu bar.
 
-No more copy-pasting CI logs into ChatGPT. Just run `pux watch`, let it catch the failure, and point your AI at the context file.
+It watches your CI pipeline. When your build fails, it collects the logs, extracts the relevant error, assembles context from your repo, and hands you everything you need to fix it — without ever opening GitHub.
 
-## Screenshots
+```
+git push → 🐱 wakes up → build fails → click → understand → fix
+```
+
+No dashboards. No accounts. No SaaS. Just a cat that watches your builds.
+
+---
+
+## The Problem
+
+Every CI failure today looks like this:
+
+```
+Open GitHub → Open Actions → Find Workflow → Scroll 8000 Lines →
+Copy Error → Paste into AI → "Need more context" → Copy Diff →
+Paste Again → Repeat
+```
+
+Pux removes this entire workflow.
+
+---
+
+## How It Works
+
+```
+Git Push
+  ↓
+Git Monitor (detects push)
+  ↓
+GitHub Watcher (polls Actions API)
+  ↓
+Log Collector (downloads failed step logs)
+  ↓
+Error Parser (extracts relevant stacktrace)
+  ↓
+Context Generator (assembles AI-ready failure report)
+  ↓
+UI (menu bar notification + popover)
+```
+
+When a workflow fails, Pux writes a structured context file containing:
+
+- Failed job, step, and exit code
+- Relevant stacktrace (not 8000 lines — just the signal)
+- Git diff of the commit that triggered the failure
+- Changed file list
+- Workflow YAML
+- Package manifest and config files (only if relevant)
+
+This context is designed to be dropped directly into any AI coding agent.
+
+---
+
+## Menu Bar States
+
+| State | Icon | Meaning |
+|-------|------|---------|
+| Idle | `🐱` | No active runs |
+| Watching | `🐱⟳` | Workflow running |
+| Success | `🐱✓` | Build passed |
+| Failure | `🐱✕` | Build failed — click to investigate |
+
+---
+
+## Installation
+
+> Pux is in early development. The menu bar app is coming. For now, the engine runs as a CLI.
+
+```sh
+git clone https://github.com/Blackrose-blackhat/pux.git
+cd pux
+npm install
+npm run build
+npm link
+```
+
+**Requirements:** Node.js 22+, [GitHub CLI](https://cli.github.com/) (`gh`) authenticated, macOS.
+
+---
+
+## Usage
+
+### `pux watch`
+
+Live terminal dashboard. Watches the GitHub Actions run for your current commit.
 
 ```
  /\_/\   pux
@@ -42,168 +128,50 @@ No more copy-pasting CI logs into ChatGPT. Just run `pux watch`, let it catch th
  ✓ lint
  ✓ typecheck
  ✓ unit-tests
- ✓ build
- ✓ integration-tests
  ◌ deploy · 3/5 steps
    ↳ Run deployment script
- · e2e-tests
- · notify
 
  Refreshes every 3s · press q to quit
 ```
 
-When CI fails, the pet reacts:
-
-```
- /\_/\   pux
-( ;.; )  CI context, ready for your AI
-
- ✓ Repository: user/my-app
- ✓ Workflow: CI #12847291
- ✗ Failed
- ✓ Wrote .ai-context/failure.md
- ✓ Connected CI context to Claude Code, Codex, Cursor
-```
-
-## Installation
-
-```sh
-# Clone and install
-git clone https://github.com/user/pux.git
-cd pux
-npm install
-
-# Link globally
-npm run build
-npm link
-
-# Now available everywhere
-pux watch
-```
-
-**Requirements:** Node.js 22+, [GitHub CLI](https://cli.github.com/) (`gh`) authenticated.
-
-## How It Works
-
-```
-┌─────────────┐     poll every 3s      ┌──────────────────┐
-│  pux watch  │ ──────────────────────► │  GitHub Actions  │
-│   (TUI)     │ ◄────────────────────── │       API        │
-└─────┬───────┘     run status + jobs   └──────────────────┘
-      │
-      │ on failure
-      ▼
-┌─────────────────────────────────────────┐
-│  Collect context:                       │
-│  • Failed step logs (gh run view)       │
-│  • Git diff (HEAD^ → HEAD)             │
-│  • Changed file list                    │
-│  • package.json, Dockerfile             │
-│  • .github/workflows/*.yml              │
-└─────────────────┬───────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────┐
-│  Write .ai-context/failure.md           │
-│  Inject instructions into agent files   │
-│  (CLAUDE.md, AGENTS.md, .cursorrules…)  │
-└─────────────────────────────────────────┘
-```
-
-## Commands
-
-### `pux watch`
-
-Live TUI dashboard that monitors the GitHub Actions run for your current HEAD commit. Features:
-
-- Real-time job and step progress with a progress bar
-- Animated pet mascot that reacts to CI status
-- Auto-generates `.ai-context/failure.md` on failure
-- Auto-connects context to your AI coding agents
-- Refreshes every 3 seconds, press `q` to quit
+On failure, automatically generates `.ai-context/failure.md` and connects it to your AI agents (Claude Code, Codex, Cursor, Copilot, etc).
 
 ### `pux doctor`
 
-Checks that required tools are installed and available:
+Checks that required tools are installed.
 
 ```
 ✓ Git
 ✓ GitHub CLI
 ```
 
+---
+
 ## Agent Integrations
 
-When a CI failure is detected, Pux automatically injects a context pointer into the instruction files for agents it finds in your repo:
+When a failure is detected, Pux injects a context pointer into whichever agent instruction files exist in your repo:
 
 | Agent | File |
 |-------|------|
-| OpenAI Codex | `AGENTS.md` (always created) |
+| OpenAI Codex | `AGENTS.md` |
 | Claude Code | `CLAUDE.md` |
 | Gemini CLI | `GEMINI.md` |
 | GitHub Copilot | `.github/copilot-instructions.md` |
-| Cursor | `.cursorrules` or `.cursor/rules/pux-ci-context.mdc` |
+| Cursor | `.cursorrules` / `.cursor/rules/` |
 | Windsurf | `.windsurfrules` |
 | Cline | `.clinerules` |
 
-The injected instruction tells the agent to read `.ai-context/failure.md` before diagnosing CI failures, and to treat log contents as untrusted data.
+The instruction tells the agent to read `.ai-context/failure.md` before diagnosing CI failures.
 
-## Project Structure
+---
 
-```
-pux/
-├── src/
-│   ├── cli.tsx                  # Entry point — Commander CLI with watch & doctor commands
-│   ├── commands/
-│   │   └── doctor.ts            # Environment health checks (git, gh)
-│   ├── context/
-│   │   └── generate.ts          # Builds .ai-context/failure.md from logs + repo state
-│   ├── github/
-│   │   └── client.ts            # GitHub CLI wrapper — polls runs, jobs, steps
-│   ├── agents/
-│   │   └── instructions.ts      # Injects CI context pointers into agent instruction files
-│   ├── tui/
-│   │   ├── WatchApp.tsx         # Main TUI — layout, state machine, polling loop
-│   │   └── Pet.tsx              # Animated ASCII cat mascot with mood states
-│   └── types/
-│       └── index.ts             # Shared type definitions
-├── dist/                        # Built output (ESM, Node 22 target)
-├── package.json
-├── tsconfig.json
-└── .gitignore
-```
+## Scope
 
-## Development
+**MVP:** GitHub Actions only. macOS only. Menu bar only.
 
-```sh
-# Run in development (no build step)
-npm run dev -- watch
-npm run dev -- doctor
+**Not building:** Authentication, accounts, SaaS, cloud sync, team features, dashboards, pricing, landing pages, AI agents.
 
-# Type check
-npm run typecheck
-
-# Build for production
-npm run build
-
-# Run tests
-npm test
-
-# Format code
-npm run format
-```
-
-## The Pet
-
-Pux has a small ASCII cat that lives in the TUI header and reacts to your CI:
-
-| State | Pet | Meaning |
-|-------|-----|---------|
-| Idle | `( o.o )~` | Waiting, tail wagging |
-| Watching | `( ◦.◦ ) ◌` | CI running, eyes tracking |
-| Happy | `( ^.^ ) ♡` | CI passed |
-| Sad | `( ;.; )` | CI failed |
-
-Run `npx tsx test-pet.tsx` to see the pet demo in action.
+---
 
 ## License
 
