@@ -20,15 +20,15 @@ export function Footer() {
         </a>
         <span>MIT License</span>
       </div>
-      <p className="text-[#333] text-xs mt-4">
+      <p className="text-muted text-xs mt-4">
         built by{" "}
         <a
-          href="https://github.com/Blackrose-blackhat"
-          className="hover:text-muted transition-colors"
+          href="https://musharraf.codes"
+          className="text-accent hover:text-foreground transition-colors"
           target="_blank"
           rel="noopener noreferrer"
         >
-          Blackrose-blackhat
+          Musharaf Parwej
         </a>
       </p>
     </footer>
