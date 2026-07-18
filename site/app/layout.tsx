@@ -18,10 +18,19 @@ export const metadata: Metadata = {
     title: "pux.sh",
     description:
       "know why your build failed before you open GitHub. AI-ready CI failure context, zero copy-paste.",
-    url: "https://pux.sh",
+    url: "https://pux-site.vercel.app",
     siteName: "pux.sh",
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        type: "image/png",
+        alt: "pux.sh — AI-ready CI failure context",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
