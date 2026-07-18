@@ -90,7 +90,7 @@ export async function getWatchSnapshot(): Promise<WatchSnapshot> {
       "--limit",
       "1",
       "--json",
-      "databaseId,status,conclusion,name,workflowName,headSha,createdAt,actor"
+      "databaseId,status,conclusion,name,workflowName,headSha,createdAt"
     ])
   );
   const run = runs?.[0];
@@ -99,5 +99,14 @@ export async function getWatchSnapshot(): Promise<WatchSnapshot> {
   const detail = parseObject<{ jobs?: GitHubJob[] }>(
     await command("gh", ["run", "view", String(run.databaseId), "--json", "jobs"])
   );
+
+  const actorLogin = await command("gh", [
+    "api",
+    `repos/${repository}/actions/runs/${run.databaseId}`,
+    "--jq",
+    ".actor.login",
+  ]);
+  run.actor = actorLogin ? { login: actorLogin } : null;
+
   return { kind: "run", repository, commit, run, jobs: detail?.jobs ?? [] };
 }

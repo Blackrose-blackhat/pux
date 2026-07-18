@@ -1,4 +1,4 @@
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import React, { useEffect, useRef, useState } from "react";
 import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
 import { generateFailureContext } from "../context/generate.js";
@@ -14,6 +14,10 @@ export function WatchApp() {
   const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
   const generatedFor = useRef<number | null>(null);
 
+  useInput((input, key) => {
+    if (input === "q" || (key.ctrl && input === "c")) exit();
+  });
+
   useEffect(() => {
     let active = true;
     const refresh = async () => {
@@ -22,16 +26,11 @@ export function WatchApp() {
     };
     void refresh();
     const timer = setInterval(() => void refresh(), 3000);
-    const onKeypress = (data: Buffer) => {
-      if (data.toString() === "q" || data.toString() === "\u0003") exit();
-    };
-    process.stdin.on("data", onKeypress);
     return () => {
       active = false;
       clearInterval(timer);
-      process.stdin.off("data", onKeypress);
     };
-  }, [exit]);
+  }, []);
 
   useEffect(() => {
     void ensureAgentInstructions().then(setAgentInstructions).catch(() => setAgentInstructions(null));

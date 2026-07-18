@@ -17,7 +17,8 @@ program
   .command("watch")
   .description("Watch the GitHub Actions run for the current commit.")
   .action(() => {
-    render(<WatchApp />);
+    process.stdout.write("\x1B[2J\x1B[H");
+    render(<WatchApp />, { patchConsole: false });
   });
 
 program
