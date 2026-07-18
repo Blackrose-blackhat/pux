@@ -1,9 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const catFrames = [
+  ` /\\_/\\  \n( o.o ) \n > ^ <  `,
+  ` /\\_/\\  \n( o.o )~\n > ^ <  `,
+  ` /\\_/\\  \n( ^.^ ) \n > ^ <  `,
+  ` /\\_/\\  \n( ^.^ )~\n > ^ <  `,
+  ` /\\_/\\  \n( o.o ) \n > ^ < ~`,
+];
 
 export function Hero() {
   const [copied, setCopied] = useState(false);
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((f) => (f + 1) % catFrames.length);
+    }, 600);
+    return () => clearInterval(timer);
+  }, []);
 
   const copy = () => {
     navigator.clipboard.writeText("npm install -g pux.sh");
@@ -13,10 +29,8 @@ export function Hero() {
 
   return (
     <section className="flex flex-col items-center justify-center pt-24 pb-16 px-4">
-      <pre className="text-accent text-sm sm:text-base leading-tight mb-6">
-        {` /\\_/\\
-( o.o )~
- > ^ <`}
+      <pre className="text-accent text-sm sm:text-base leading-tight mb-6 h-[3.6em]">
+        {catFrames[frame]}
       </pre>
       <h1 className="text-3xl sm:text-4xl font-bold text-foreground mb-3">
         pux.sh
