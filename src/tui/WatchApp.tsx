@@ -88,7 +88,7 @@ function Status({ snapshot, contextStatus, agentInstructions }: { snapshot: Watc
   return (
     <Box flexDirection="column">
       <Text>✓ Repository: {snapshot.repository}</Text>
-      <Text>✓ Workflow: {label} <Text dimColor>#{run.databaseId}</Text></Text>
+      <Text>✓ Workflow: {label} <Text dimColor>#{run.databaseId}</Text>{run.actor && <Text dimColor> · pushed by </Text>}{run.actor && <Text color="cyan">{run.actor.login}</Text>}</Text>
       <Text color={failed ? "red" : completed ? "green" : "yellow"}>{failed ? "✗ Failed" : completed ? "✓ Completed" : "◌ Running"}</Text>
       <JobProgress jobs={snapshot.jobs} />
       {failed && contextStatus === "generating" && <Text color="yellow">◌ Downloading failed logs and collecting context…</Text>}

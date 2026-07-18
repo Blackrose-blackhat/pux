@@ -11,6 +11,7 @@ export type GitHubRun = {
   workflowName: string | null;
   headSha: string;
   createdAt: string;
+  actor: { login: string } | null;
 };
 
 export type GitHubStep = {
@@ -89,7 +90,7 @@ export async function getWatchSnapshot(): Promise<WatchSnapshot> {
       "--limit",
       "1",
       "--json",
-      "databaseId,status,conclusion,name,workflowName,headSha,createdAt"
+      "databaseId,status,conclusion,name,workflowName,headSha,createdAt,actor"
     ])
   );
   const run = runs?.[0];
