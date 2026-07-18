@@ -11,7 +11,7 @@ const program = new Command();
 program
   .name("pux")
   .description("Package CI failures into AI-ready local context.")
-  .version("0.1.0", "-v, --version");
+  .version("0.1.2", "-v, --version");
 
 program
   .command("watch")
