@@ -29,6 +29,10 @@ export const metadata: Metadata = {
     description:
       "know why your build failed before you open GitHub. AI-ready CI failure context, zero copy-paste.",
   },
+  icons: {
+    icon: "/logo.svg",
+    apple: "/logo.svg",
+  },
   keywords: [
     "CI",
     "GitHub Actions",
