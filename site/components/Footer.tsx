@@ -18,7 +18,7 @@ export function Footer() {
         >
           npm
         </a>
-        <span>MIT License</span>
+
       </div>
       <p className="text-muted text-xs mt-4">
         built by{" "}

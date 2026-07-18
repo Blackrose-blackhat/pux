@@ -1,64 +1,21 @@
 export function HowItWorks() {
-  const steps = [
-    {
-      label: "git push",
-      description: "you push code to your repo",
-      icon: "→",
-    },
-    {
-      label: "pux watches",
-      description: "monitors GitHub Actions in real time",
-      icon: "◌",
-    },
-    {
-      label: "build fails",
-      description: "downloads logs, extracts the signal",
-      icon: "✗",
-    },
-    {
-      label: "context ready",
-      description: "writes .ai-context/failure.md",
-      icon: "✓",
-    },
-  ];
-
   return (
-    <section className="flex flex-col items-center px-4 py-16 max-w-3xl mx-auto">
-      <h2 className="text-xl font-bold text-foreground mb-10">how it works</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
-        {steps.map((step, i) => (
-          <div
-            key={i}
-            className="bg-[#111111] border border-[#2a2a2a] rounded-lg p-4 text-center"
-          >
-            <div className="text-2xl mb-2 text-accent">{step.icon}</div>
-            <p className="text-foreground text-sm font-bold mb-1">
-              {step.label}
-            </p>
-            <p className="text-muted text-xs">{step.description}</p>
-          </div>
-        ))}
-      </div>
-      <div className="mt-10 bg-[#111111] border border-[#2a2a2a] rounded-lg p-5 w-full text-xs sm:text-sm">
-        <pre className="text-muted leading-relaxed">
-          {`Git Push
-  ↓
-Git Monitor (detects push)
-  ↓
-GitHub Watcher (polls Actions API)
-  ↓
-Log Collector (downloads failed step logs)
-  ↓
-Error Parser (extracts relevant stacktrace)
-  ↓
-Context Generator (assembles AI-ready report)
-  ↓
-`}
-          <span className="text-accent">
-            .ai-context/failure.md written
-          </span>
-        </pre>
-      </div>
+    <section className="flex flex-col items-center px-4 py-16 max-w-2xl mx-auto">
+      <h2 className="text-xl font-bold text-foreground mb-6">how it works</h2>
+      <p className="text-muted text-sm leading-relaxed text-justify mb-6">
+        you push code. pux detects it, polls GitHub Actions until the run
+        finishes. if it fails, pux pulls the logs, extracts the stacktrace,
+        grabs your diff and changed files, and writes everything into a single
+        markdown file at <span className="text-accent">.ai-context/failure.md</span>.
+      </p>
+      <p className="text-muted text-sm leading-relaxed text-justify mb-6">
+        your AI agent — claude, codex, cursor, copilot, whoever — picks it up
+        on the next prompt. no tabs, no scrolling, no manual copy-paste. the
+        context is already there.
+      </p>
+      <p className="text-foreground text-sm leading-relaxed text-justify">
+        git push → pux watches → build fails → context written. that&apos;s it.
+      </p>
     </section>
   );
 }
