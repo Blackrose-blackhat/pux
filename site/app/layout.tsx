@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   title: "pux.sh — know why your build failed before you open GitHub",
   description:
     "pux watches your CI pipeline. when your build fails, it collects the logs, extracts the error, and hands your AI agent the full context automatically.",
-  metadataBase: new URL("https://pux.sh"),
+  metadataBase: new URL("https://pux-site.vercel.app"),
   openGraph: {
     title: "pux.sh",
     description:
