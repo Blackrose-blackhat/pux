@@ -10,6 +10,12 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/pux.sh"><img src="https://img.shields.io/npm/v/pux.sh?color=cyan&label=npm" alt="npm version"></a>
+  <a href="https://github.com/Blackrose-blackhat/pux/actions"><img src="https://img.shields.io/github/actions/workflow/status/Blackrose-blackhat/pux/publish.yml?label=CI" alt="CI"></a>
+  <a href="https://github.com/Blackrose-blackhat/pux/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
+</p>
+
+<p align="center">
   <a href="#what-is-pux">What</a> &bull;
   <a href="#how-it-works">How</a> &bull;
   <a href="#installation">Install</a> &bull;
@@ -93,7 +99,17 @@ This context is designed to be dropped directly into any AI coding agent.
 
 ## Installation
 
-> Pux is in early development. The menu bar app is coming. For now, the engine runs as a CLI.
+```sh
+npm install -g pux.sh
+```
+
+Or use it directly without installing:
+
+```sh
+npx pux.sh watch
+```
+
+Or build from source:
 
 ```sh
 git clone https://github.com/Blackrose-blackhat/pux.git
@@ -104,6 +120,8 @@ npm link
 ```
 
 **Requirements:** Node.js 22+, [GitHub CLI](https://cli.github.com/) (`gh`) authenticated, macOS.
+
+> The menu bar app is coming. For now, the engine runs as a CLI.
 
 ---
 
