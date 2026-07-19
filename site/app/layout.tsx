@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     images: [
       {
-        url: "/opengraph-image",
+        url: "/assets/og-banner.png",
         width: 1200,
         height: 630,
         type: "image/png",
@@ -37,6 +37,7 @@ export const metadata: Metadata = {
     title: "pux.sh",
     description:
       "know why your build failed before you open GitHub. AI-ready CI failure context, zero copy-paste.",
+    images: ["/assets/og-banner.png"],
   },
   icons: {
     icon: "/logo.svg",
