@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import React, { useEffect, useState } from "react";
 
-export type PetMood = "idle" | "happy" | "sad" | "watching";
+export type PetMood = "idle" | "happy" | "sad" | "watching" | "installing";
 
 interface Frame {
   lines: string[];
@@ -26,6 +26,12 @@ const FRAMES: Record<PetMood, Frame[]> = {
     { lines: [" /\\_/\\  ", "( o.o ) ", " > ^ < ◌"], color: "yellow" },
     { lines: [" /\\_/\\  ", "( ◦.◦ ) ", " > ^ < ○"], color: "yellow" },
     { lines: [" /\\_/\\  ", "( o.o )~", " > ^ < ◌"], color: "yellow" },
+  ],
+  installing: [
+    { lines: [" /\\_/\\  ", "( >.< ) ", " > ^ < ⚙"], color: "magenta" },
+    { lines: [" /\\_/\\  ", "( >.<)~ ", " > ^ <  ⚙"], color: "magenta" },
+    { lines: [" /\\_/\\  ", "( >.< ) ", " > ^ < ⚙"], color: "cyan" },
+    { lines: [" /\\_/\\  ", "(~>.< ) ", " > ^ < ⚙"], color: "cyan" },
   ],
 };
 

@@ -27,8 +27,13 @@ program
   .description("Watch the GitHub Actions run for the current commit.")
   .action(async () => {
     await notifyIfOutdated();
-    process.stdout.write("\x1B[2J\x1B[H");
-    render(<WatchApp />, { patchConsole: false });
+    // Enter alternate screen buffer + clear
+    process.stdout.write("\x1B[?1049h\x1B[2J\x1B[H");
+    const instance = render(<WatchApp />);
+    instance.waitUntilExit().then(() => {
+      // Leave alternate screen buffer — restores original terminal content
+      process.stdout.write("\x1B[?1049l");
+    });
   });
 
 program

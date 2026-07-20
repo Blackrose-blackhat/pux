@@ -1,57 +1,182 @@
 import { Box, Text, useApp, useInput } from "ink";
 import React, { useEffect, useRef, useState } from "react";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
 import { generateFailureContext } from "../context/generate.js";
-import { getWatchSnapshot, type GitHubJob, type WatchSnapshot } from "../github/client.js";
+import { getWatchSnapshot, type WatchSnapshot } from "../github/client.js";
+import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
 
-type ContextStatus = "idle" | "generating" | "written" | "error";
+const execFileAsync = promisify(execFile);
+
+type Phase = "setup" | "watching";
+type InstallStatus = "prompting" | "installing" | "done" | "failed";
+
+type ProviderState = {
+  provider: Provider;
+  snapshot: ProviderSnapshot;
+};
 
 export function WatchApp() {
   const { exit } = useApp();
-  const [snapshot, setSnapshot] = useState<WatchSnapshot>({ kind: "checking" });
-  const [contextStatus, setContextStatus] = useState<ContextStatus>("idle");
-  const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
-  const generatedFor = useRef<number | null>(null);
+  const [phase, setPhase] = useState<Phase>("setup");
 
+  // Setup state
+  const [missingDeps, setMissingDeps] = useState<MissingDependency[]>([]);
+  const [installStatus, setInstallStatus] = useState<InstallStatus | null>(null);
+  const [installIndex, setInstallIndex] = useState(0);
+
+  // Watching state
+  const [providerStates, setProviderStates] = useState<ProviderState[]>([]);
+  const [repository, setRepository] = useState<string | null>(null);
+  const [commit, setCommit] = useState<string | null>(null);
+  const [contextStatus, setContextStatus] = useState<"idle" | "generating" | "written" | "error">("idle");
+  const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
+  const [legacySnapshot, setLegacySnapshot] = useState<WatchSnapshot>({ kind: "checking" });
+  const generatedFor = useRef<string | null>(null);
+  const providersRef = useRef<Provider[]>([]);
+
+  // Initial detection
+  useEffect(() => {
+    void detectProviders().then(({ providers, repository: repo, commit: sha, missing }) => {
+      providersRef.current = providers;
+      setRepository(repo);
+      setCommit(sha);
+
+      if (missing.length > 0) {
+        setMissingDeps(missing);
+        setInstallStatus("prompting");
+      } else {
+        process.stdout.write("\x1B[2J\x1B[H");
+        setPhase("watching");
+        setProviderStates(providers.map((p) => ({ provider: p, snapshot: { kind: "waiting" } })));
+      }
+    });
+  }, []);
+
+  // Handle input based on phase
   useInput((input, key) => {
-    if (input === "q" || (key.ctrl && input === "c")) exit();
+    if (key.ctrl && input === "c") { exit(); return; }
+
+    if (phase === "setup" && installStatus === "prompting") {
+      if (input === "y" || input === "Y") {
+        setInstallStatus("installing");
+        void runInstall(missingDeps[installIndex].install);
+      } else if (input === "n" || input === "N") {
+        moveToNext();
+      }
+      return;
+    }
+
+    if (input === "q") exit();
   });
 
+  function moveToNext() {
+    const next = installIndex + 1;
+    if (next < missingDeps.length) {
+      process.stdout.write("\x1B[2J\x1B[H");
+      setInstallIndex(next);
+      setInstallStatus("prompting");
+    } else {
+      finishSetup();
+    }
+  }
+
+  function finishSetup() {
+    setInstallStatus(null);
+    // Clear screen before transitioning to avoid trailing setup artifacts
+    process.stdout.write("\x1B[2J\x1B[H");
+    setPhase("watching");
+    // Re-detect after installs
+    void detectProviders().then(({ providers, repository: repo, commit: sha }) => {
+      providersRef.current = providers;
+      setRepository(repo);
+      setCommit(sha);
+      setProviderStates(providers.map((p) => ({ provider: p, snapshot: { kind: "waiting" } })));
+    });
+  }
+
+  async function runInstall(cmd: string) {
+    try {
+      const [bin, ...args] = cmd.split(" ");
+      const isAuth = cmd.includes("login") || cmd.includes("auth");
+      if (isAuth) {
+        // Auth commands need to spawn with stdio so user can see the URL/device code
+        const { spawn } = await import("node:child_process");
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(bin, args, { stdio: "inherit" });
+          child.on("close", (code) => code === 0 ? resolve() : reject());
+          child.on("error", reject);
+        });
+      } else {
+        await execFileAsync(bin, args, { encoding: "utf8", timeout: 120000 });
+      }
+      setInstallStatus("done");
+      setTimeout(() => moveToNext(), 1500);
+    } catch {
+      setInstallStatus("failed");
+      setTimeout(() => moveToNext(), 2500);
+    }
+  }
+
+  // Polling (only in watching phase)
   useEffect(() => {
+    if (phase !== "watching" || !repository || !commit) return;
     let active = true;
+
     const refresh = async () => {
-      const next = await getWatchSnapshot();
-      if (active) setSnapshot(next);
+      const states = await Promise.all(
+        providersRef.current.map(async (provider) => {
+          const snapshot = await provider.poll(repository, commit);
+          return { provider, snapshot };
+        })
+      );
+      if (active) setProviderStates(states);
+
+      const legacy = await getWatchSnapshot();
+      if (active) setLegacySnapshot(legacy);
     };
+
     void refresh();
     const timer = setInterval(() => void refresh(), 3000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, []);
+    return () => { active = false; clearInterval(timer); };
+  }, [phase, repository, commit]);
 
   useEffect(() => {
+    if (phase !== "watching") return;
     void ensureAgentInstructions().then(setAgentInstructions).catch(() => setAgentInstructions(null));
-  }, []);
+  }, [phase]);
 
   useEffect(() => {
-    if (snapshot.kind !== "run" || snapshot.run.status !== "completed" || snapshot.run.conclusion !== "failure") return;
-    if (generatedFor.current === snapshot.run.databaseId) return;
+    if (legacySnapshot.kind !== "run" || legacySnapshot.run.status !== "completed" || legacySnapshot.run.conclusion !== "failure") return;
+    if (generatedFor.current === String(legacySnapshot.run.databaseId)) return;
 
-    generatedFor.current = snapshot.run.databaseId;
+    generatedFor.current = String(legacySnapshot.run.databaseId);
     setContextStatus("generating");
-    void generateFailureContext(snapshot)
+    void generateFailureContext(legacySnapshot)
       .then(() => setContextStatus("written"))
       .catch(() => setContextStatus("error"));
-  }, [snapshot]);
+  }, [legacySnapshot]);
 
-  const mood: PetMood =
-    snapshot.kind === "run" && snapshot.run.status === "completed" && snapshot.run.conclusion === "failure" ? "sad" :
-    snapshot.kind === "run" && snapshot.run.status === "completed" ? "happy" :
-    snapshot.kind === "run" ? "watching" :
-    "idle";
+  // --- RENDER ---
+
+  if (phase === "setup") {
+    return <SetupView
+      missingDeps={missingDeps}
+      installIndex={installIndex}
+      installStatus={installStatus}
+    />;
+  }
+
+  const allPipelines = providerStates.flatMap((s) =>
+    s.snapshot.kind === "active" ? s.snapshot.pipelines : []
+  );
+  const hasFailure = allPipelines.some((p) => p.status === "failed");
+  const allCompleted = allPipelines.length > 0 && allPipelines.every((p) => p.status === "completed");
+  const pipelineCount = allPipelines.length;
+
+  const mood: PetMood = hasFailure ? "sad" : allCompleted ? "happy" : pipelineCount > 0 ? "watching" : "idle";
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -59,70 +184,130 @@ export function WatchApp() {
         <Pet mood={mood} />
         <Box flexDirection="column" marginLeft={1} justifyContent="center">
           <Text color="cyan" bold>pux</Text>
-          <Text dimColor>CI context, ready for your AI</Text>
+          <Text dimColor>watching {pipelineCount} pipeline{pipelineCount !== 1 ? "s" : ""}</Text>
         </Box>
       </Box>
-      <Status snapshot={snapshot} contextStatus={contextStatus} agentInstructions={agentInstructions} />
-      <Box marginTop={1}><Text dimColor>Refreshes every 3s · press q to quit</Text></Box>
+
+      {repository && <Text>✓ Repository: {repository}</Text>}
+
+      {providerStates.map((state) => (
+        <Box key={state.provider.name} flexDirection="column" marginTop={1}>
+          <ProviderSection state={state} />
+        </Box>
+      ))}
+
+      {hasFailure && contextStatus === "generating" && <Box marginTop={1}><Text color="yellow">◌ Downloading logs…</Text></Box>}
+      {hasFailure && contextStatus === "written" && <Box marginTop={1}><Text color="green">✓ Wrote .ai-context/failure.md</Text></Box>}
+      {hasFailure && contextStatus === "error" && <Box marginTop={1}><Text color="red">✗ Could not create .ai-context/failure.md</Text></Box>}
+
+      {agentInstructions && agentInstructions.added.length > 0 && (
+        <Box marginTop={1}><Text color="green">✓ Connected CI context to {agentInstructions.added.join(", ")}</Text></Box>
+      )}
+
+      <Box marginTop={1}><Text dimColor>press q to quit</Text></Box>
     </Box>
   );
 }
 
-function Status({ snapshot, contextStatus, agentInstructions }: { snapshot: WatchSnapshot; contextStatus: ContextStatus; agentInstructions: AgentInstructionResult | null }) {
-  if (snapshot.kind === "checking") return <Text color="yellow">◌ Checking this project…</Text>;
-  if (snapshot.kind === "no-repository") return <Text color="red">✗ Not inside a Git repository.</Text>;
-  if (snapshot.kind === "gh-unavailable") return <Text color="red">✗ GitHub CLI is not installed. Install it with: brew install gh</Text>;
-  if (snapshot.kind === "not-authenticated") return <Text color="red">✗ GitHub CLI is not authenticated. Run: gh auth login</Text>;
-  if (snapshot.kind === "no-workflows") {
-    return <Box flexDirection="column"><Text color="yellow">No GitHub Actions workflows found.</Text><Text dimColor>Pux currently watches GitHub Actions only.</Text></Box>;
+function SetupView({ missingDeps, installIndex, installStatus }: {
+  missingDeps: MissingDependency[];
+  installIndex: number;
+  installStatus: InstallStatus | null;
+}) {
+  const current = missingDeps[installIndex];
+  if (!current) return <Text color="yellow">◌ Setting up…</Text>;
+
+  const petMood: PetMood = installStatus === "installing" ? "installing"
+    : installStatus === "done" ? "happy"
+    : installStatus === "failed" ? "sad"
+    : "idle";
+
+  return (
+    <Box flexDirection="column" paddingX={1}>
+      <Box marginBottom={1}>
+        <Pet mood={petMood} />
+        <Box flexDirection="column" marginLeft={1} justifyContent="center">
+          <Text color="cyan" bold>pux setup</Text>
+          <Text dimColor>configuring providers</Text>
+        </Box>
+      </Box>
+
+      <Text color="yellow">⚠ {current.reason}</Text>
+      <Text> </Text>
+
+      {installStatus === "prompting" && (
+        <Box flexDirection="column">
+          <Text>  Install <Text color="cyan" bold>{current.provider}</Text> now?</Text>
+          <Text>  <Text dimColor>({current.install})</Text></Text>
+          <Text> </Text>
+          <Text>  Press <Text color="green" bold>y</Text> to install · <Text color="red" bold>n</Text> to skip</Text>
+        </Box>
+      )}
+
+      {installStatus === "installing" && (
+        <Text color="yellow">◌ Installing {current.provider}…</Text>
+      )}
+
+      {installStatus === "done" && (
+        <Text color="green">✓ {current.provider} installed</Text>
+      )}
+
+      {installStatus === "failed" && (
+        <Box flexDirection="column">
+          <Text color="red">✗ Installation failed</Text>
+          <Text dimColor>  Run manually: {current.install}</Text>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function ProviderSection({ state }: { state: ProviderState }) {
+  const { provider, snapshot } = state;
+
+  if (snapshot.kind === "unavailable") {
+    return <Text dimColor>{provider.name} · unavailable</Text>;
   }
   if (snapshot.kind === "waiting") {
-    return <Box flexDirection="column"><Text>✓ Repository: {snapshot.repository}</Text><Text color="yellow">◌ Waiting for a GitHub Actions run for {snapshot.commit.slice(0, 7)}…</Text></Box>;
+    return <Text color="yellow">◌ {provider.name} · waiting…</Text>;
   }
 
-  const { run } = snapshot;
-  const label = run.workflowName ?? run.name;
-  const failed = run.status === "completed" && run.conclusion === "failure";
-  const completed = run.status === "completed";
   return (
     <Box flexDirection="column">
-      <Text>✓ Repository: {snapshot.repository}</Text>
-      <Text>✓ Workflow: {label} <Text dimColor>#{run.databaseId}</Text>{run.actor && <Text dimColor> · pushed by </Text>}{run.actor && <Text color="cyan">{run.actor.login}</Text>}</Text>
-      <Text color={failed ? "red" : completed ? "green" : "yellow"}>{failed ? "✗ Failed" : completed ? "✓ Completed" : "◌ Running"}</Text>
-      <JobProgress jobs={snapshot.jobs} />
-      {failed && contextStatus === "generating" && <Text color="yellow">◌ Downloading failed logs and collecting context…</Text>}
-      {failed && contextStatus === "written" && <Text color="green">✓ Wrote .ai-context/failure.md</Text>}
-      {failed && contextStatus === "error" && <Text color="red">✗ Could not create .ai-context/failure.md</Text>}
-      {agentInstructions && agentInstructions.added.length > 0 && <Text color="green">✓ Connected CI context to {agentInstructions.added.join(", ")}</Text>}
+      {snapshot.pipelines.map((pipeline) => (
+        <PipelineRow key={pipeline.id} pipeline={pipeline} providerName={provider.name} />
+      ))}
     </Box>
   );
 }
 
-function JobProgress({ jobs }: { jobs: GitHubJob[] }) {
-  if (jobs.length === 0) return <Text dimColor>Loading job progress…</Text>;
-
-  const completedJobs = jobs.filter((job) => job.status === "completed").length;
-  const width = 12;
-  const filled = Math.round((completedJobs / jobs.length) * width);
-  const bar = `${"█".repeat(filled)}${"░".repeat(width - filled)}`;
+function PipelineRow({ pipeline, providerName }: { pipeline: Pipeline; providerName: string }) {
+  const symbol = pipeline.status === "failed" ? "✗"
+    : pipeline.status === "completed" ? "✓"
+    : pipeline.status === "building" ? "◌"
+    : "·";
+  const color = pipeline.status === "failed" ? "red"
+    : pipeline.status === "completed" ? "green"
+    : pipeline.status === "building" ? "yellow"
+    : undefined;
 
   return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text>Progress <Text color="cyan">{bar}</Text> {completedJobs}/{jobs.length} jobs</Text>
-      {jobs.map((job) => {
-        const failed = job.status === "completed" && job.conclusion === "failure";
-        const finished = job.status === "completed";
-        const activeStep = job.steps.find((step) => step.status === "in_progress");
-        const completedSteps = job.steps.filter((step) => step.status === "completed").length;
-        const symbol = failed ? "✗" : finished ? "✓" : job.status === "in_progress" ? "◌" : "·";
-        const color = failed ? "red" : finished ? "green" : job.status === "in_progress" ? "yellow" : undefined;
-        return (
-          <Box key={job.databaseId} flexDirection="column">
-            <Text color={color}>{symbol} {job.name}{job.status === "in_progress" && job.steps.length > 0 ? ` · ${completedSteps}/${job.steps.length} steps` : ""}</Text>
-            {activeStep && <Text dimColor>  ↳ {activeStep.name}</Text>}
-          </Box>
-        );
-      })}
+    <Box flexDirection="column">
+      <Text>
+        <Text color={color}>{symbol} </Text>
+        <Text bold>{providerName}</Text>
+        <Text> · {pipeline.name}</Text>
+        {pipeline.actor && <Text dimColor> · {pipeline.actor}</Text>}
+      </Text>
+      {pipeline.steps && pipeline.steps.length > 0 && (
+        <Box flexDirection="column" marginLeft={4}>
+          {pipeline.steps.map((step, i) => {
+            const stepSymbol = step.status === "failed" ? "✗" : step.status === "completed" ? "✓" : step.status === "building" ? "◌" : "·";
+            const stepColor = step.status === "failed" ? "red" : step.status === "completed" ? "green" : step.status === "building" ? "yellow" : undefined;
+            return <Text key={i} color={stepColor}>{stepSymbol} {step.name}</Text>;
+          })}
+        </Box>
+      )}
     </Box>
   );
 }
