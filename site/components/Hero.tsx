@@ -15,7 +15,7 @@ export function Hero() {
   return (
     <section className="flex flex-col items-center justify-center pt-24 pb-16 px-4">
       <Image
-        src="/assets/header.png"
+        src="/assets/banner.png"
         alt="pux"
         width={200}
         height={80}
