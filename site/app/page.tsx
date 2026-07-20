@@ -1,5 +1,6 @@
 import { Hero } from "../components/Hero";
 import { Terminal } from "../components/Terminal";
+import { Integrations } from "../components/Integrations";
 import { Problem } from "../components/Problem";
 import { HowItWorks } from "../components/HowItWorks";
 import { Features } from "../components/Features";
@@ -12,6 +13,7 @@ export default function Home() {
     <main>
       <Hero />
       <Terminal />
+      <Integrations />
       <Problem />
       <HowItWorks />
       <Features />

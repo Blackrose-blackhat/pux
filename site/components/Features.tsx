@@ -6,6 +6,11 @@ export function Features() {
         "watches GitHub Actions runs with live job and step progress. animated progress bar, per-job status.",
     },
     {
+      title: "multi-provider support",
+      description:
+        "monitors GitHub Actions and Vercel deployments side by side. auto-detects monorepos and watches all pipelines from a single view.",
+    },
+    {
       title: "automatic failure context",
       description:
         "when CI fails, downloads logs, extracts the relevant error window, collects diff and config files.",
@@ -13,7 +18,12 @@ export function Features() {
     {
       title: "AI agent integration",
       description:
-        "auto-injects context pointers into CLAUDE.md, AGENTS.md, .cursorrules, and 4 other agent files.",
+        "auto-injects context pointers into CLAUDE.md, AGENTS.md, .cursorrules, and 6 other agent files.",
+    },
+    {
+      title: "adaptive live polling",
+      description:
+        "detects pushes and new commits automatically. polls every 3s during active builds, backs off when idle.",
     },
     {
       title: "ambient companion",

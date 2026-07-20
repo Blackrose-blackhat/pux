@@ -30,7 +30,13 @@ export function Install() {
     <section className="flex flex-col items-center px-4 py-16 max-w-md mx-auto">
       <h2 className="text-xl font-bold text-foreground mb-8">get started</h2>
       <div className="space-y-3 w-full">
+        <p className="text-muted text-xs uppercase tracking-wide">npm</p>
         <CopyBlock command="npm install -g pux.sh" />
+        <p className="text-muted text-xs uppercase tracking-wide mt-4">homebrew</p>
+        <CopyBlock command="brew install Blackrose-blackhat/pux/pux" />
+      </div>
+      <div className="space-y-3 w-full mt-8">
+        <p className="text-muted text-xs uppercase tracking-wide">then run</p>
         <CopyBlock command="pux watch" />
         <CopyBlock command="pux doctor" />
       </div>
@@ -44,7 +50,7 @@ export function Install() {
         >
           GitHub CLI
         </a>{" "}
-        authenticated.
+        authenticated. Vercel CLI optional for deployment monitoring.
       </p>
     </section>
   );

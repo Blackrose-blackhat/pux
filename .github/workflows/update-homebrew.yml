@@ -1,0 +1,33 @@
+name: Update Homebrew Formula
+
+on:
+  workflow_run:
+    workflows: ["Publish to npm"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  update-formula:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version and update formula
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          URL="https://registry.npmjs.org/pux.sh/-/pux.sh-${VERSION}.tgz"
+          sleep 30
+          SHA=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)
+          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/pux.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA}\"|" Formula/pux.rb
+
+      - name: Commit updated formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/pux.rb
+          git diff --staged --quiet || git commit -m "chore: bump homebrew formula to $(node -p "require('./package.json').version")"
+          git push

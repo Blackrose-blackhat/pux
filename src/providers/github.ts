@@ -1,3 +1,5 @@
+import { access, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { command } from "../github/client.js";
 import type { Pipeline, Provider, ProviderSnapshot } from "./types.js";
 
@@ -57,12 +59,18 @@ function flattenSteps(jobs: GitHubJob[]): Pipeline["steps"] {
 export const githubProvider: Provider = {
   name: "GitHub Actions",
 
-  async detect(): Promise<boolean> {
+  async detect(root: string): Promise<boolean> {
     if ((await command("gh", ["--version"])) === null) return false;
     if ((await command("gh", ["auth", "status"])) === null) return false;
-    const workflows = await command("gh", ["workflow", "list", "--all", "--json", "id"]);
-    const parsed = parseJSON<{ id: number }[]>(workflows);
-    return parsed !== null && parsed.length > 0;
+    // Check locally for workflow files — avoids an API call
+    const workflowsDir = join(root, ".github", "workflows");
+    try {
+      await access(workflowsDir);
+      const files = await readdir(workflowsDir);
+      return files.some((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+    } catch {
+      return false;
+    }
   },
 
   async poll(repository: string, commit: string): Promise<ProviderSnapshot> {

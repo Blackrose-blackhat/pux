@@ -11,17 +11,19 @@ const catFrames = [
 
 const lines = [
   { type: "status", icon: "✓", color: "success", text: "Repository: user/my-app" },
-  { type: "status", icon: "✓", color: "success", text: "Workflow: CI", dim: "#12847" },
-  { type: "status", icon: "◌", color: "yellow", text: "Running" },
+  { type: "status", icon: "◌", color: "yellow", text: "watching 2 pipelines", dim: "· a3f7c2e" },
   { type: "spacer" },
+  { type: "header", text: "GitHub Actions · CI #12847 · alice" },
   { type: "progress" },
   { type: "job", icon: "✓", color: "success", text: "lint" },
   { type: "job", icon: "✓", color: "success", text: "typecheck" },
-  { type: "job", icon: "✓", color: "success", text: "unit-tests" },
   { type: "job", icon: "✓", color: "success", text: "build" },
   { type: "job", icon: "◌", color: "yellow", text: "deploy", dim: "· 3/5 steps" },
   { type: "step", text: "↳ Run deployment script" },
-  { type: "job", icon: "·", color: "muted", text: "e2e-tests" },
+  { type: "spacer" },
+  { type: "header", text: "Vercel · my-app · alice" },
+  { type: "job", icon: "◌", color: "yellow", text: "Building", dim: "· 42s" },
+  { type: "step", text: "↳ Installing dependencies..." },
 ] as const;
 
 export function Terminal() {
@@ -47,7 +49,7 @@ export function Terminal() {
   }, [visibleLines]);
 
   useEffect(() => {
-    if (visibleLines >= 5 && progressWidth < 8) {
+    if (visibleLines >= 5 && progressWidth < 4) {
       const timer = setTimeout(() => setProgressWidth((w) => w + 1), 200);
       return () => clearTimeout(timer);
     }
@@ -86,8 +88,8 @@ export function Terminal() {
               if (line.type === "spacer") return <div key={i} className="h-2" />;
 
               if (line.type === "progress") {
-                const filled = "█".repeat(progressWidth);
-                const empty = "░".repeat(12 - progressWidth);
+                const filled = "█".repeat(progressWidth * 2);
+                const empty = "░".repeat(10 - progressWidth * 2);
                 return (
                   <p key={i}>
                     <span className="text-foreground">Progress </span>
@@ -95,8 +97,16 @@ export function Terminal() {
                     <span className="text-muted">{empty}</span>
                     <span className="text-foreground">
                       {" "}
-                      {progressWidth}/8 jobs
+                      {progressWidth}/5 jobs
                     </span>
+                  </p>
+                );
+              }
+
+              if (line.type === "header") {
+                return (
+                  <p key={i} className="font-bold animate-[fadeIn_0.3s_ease-in]">
+                    <span className="text-foreground">{line.text}</span>
                   </p>
                 );
               }
@@ -135,7 +145,7 @@ export function Terminal() {
           </div>
 
           <p className="mt-4 text-muted">
-            Refreshes every 3s · press q to quit
+            Live · press q to quit
           </p>
         </div>
       </div>
