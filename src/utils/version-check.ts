@@ -44,7 +44,6 @@ export async function autoUpdate(): Promise<boolean> {
         await execFileAsync("sudo", ["npm", "install", "-g", "pux.sh@latest"], {
           encoding: "utf8",
           timeout: 60000,
-          stdio: "inherit" as never,
         });
         console.log(`\x1b[32m✓ Updated to pux ${latest}\x1b[0m\n`);
         return true;
