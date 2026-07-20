@@ -7,6 +7,7 @@ export type Pipeline = {
   status: PipelineStatus;
   actor: string | null;
   url: string | null;
+  commit?: string | null;
   steps?: { name: string; status: string }[];
 };
 

@@ -1,10 +1,11 @@
 import { Box, Text, useApp, useInput } from "ink";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { execFile } from "node:child_process";
+import { watch as fsWatch } from "node:fs";
 import { promisify } from "node:util";
 import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
 import { generateFailureContext } from "../context/generate.js";
-import { getWatchSnapshot, type WatchSnapshot } from "../github/client.js";
+import { command, getWatchSnapshot, type WatchSnapshot } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
 
@@ -120,28 +121,74 @@ export function WatchApp() {
     }
   }
 
-  // Polling (only in watching phase)
-  useEffect(() => {
-    if (phase !== "watching" || !repository || !commit) return;
-    let active = true;
+  // Adaptive polling: 3s when active builds, 15s when idle/completed
+  // Also watches .git/refs for push events to trigger immediate refresh
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPolling = useRef(false);
 
-    const refresh = async () => {
+  const getInterval = useCallback(() => {
+    const hasActive = providerStates.some(
+      (s) => s.snapshot.kind === "active" &&
+        s.snapshot.pipelines.some((p) => p.status === "building" || p.status === "queued")
+    );
+    return hasActive ? 3000 : 15000;
+  }, [providerStates]);
+
+  const refresh = useCallback(async () => {
+    if (!repository || !commit || isPolling.current) return;
+    isPolling.current = true;
+    try {
       const states = await Promise.all(
         providersRef.current.map(async (provider) => {
           const snapshot = await provider.poll(repository, commit);
           return { provider, snapshot };
         })
       );
-      if (active) setProviderStates(states);
+      setProviderStates(states);
 
       const legacy = await getWatchSnapshot();
-      if (active) setLegacySnapshot(legacy);
+      setLegacySnapshot(legacy);
+    } finally {
+      isPolling.current = false;
+    }
+  }, [repository, commit]);
+
+  useEffect(() => {
+    if (phase !== "watching" || !repository || !commit) return;
+    let active = true;
+
+    const schedule = () => {
+      if (!active) return;
+      pollTimer.current = setTimeout(() => {
+        if (!active) return;
+        void refresh().then(() => { if (active) schedule(); });
+      }, getInterval());
     };
 
-    void refresh();
-    const timer = setInterval(() => void refresh(), 3000);
-    return () => { active = false; clearInterval(timer); };
-  }, [phase, repository, commit]);
+    void refresh().then(() => { if (active) schedule(); });
+    return () => { active = false; if (pollTimer.current) clearTimeout(pollTimer.current); };
+  }, [phase, repository, commit, refresh, getInterval]);
+
+  // Watch .git/refs for push events — triggers immediate re-poll + commit update
+  useEffect(() => {
+    if (phase !== "watching") return;
+    let watcher: ReturnType<typeof fsWatch> | null = null;
+    void (async () => {
+      const root = await command("git", ["rev-parse", "--show-toplevel"]);
+      if (!root) return;
+      try {
+        watcher = fsWatch(`${root}/.git/refs`, { recursive: true }, () => {
+          // New push detected — update commit and re-poll immediately
+          void command("git", ["rev-parse", "HEAD"]).then((newCommit) => {
+            if (newCommit && newCommit !== commit) setCommit(newCommit);
+            if (pollTimer.current) clearTimeout(pollTimer.current);
+            void refresh();
+          });
+        });
+      } catch { /* .git/refs may not exist in worktree setups */ }
+    })();
+    return () => { watcher?.close(); };
+  }, [phase, commit, refresh]);
 
   useEffect(() => {
     if (phase !== "watching") return;
@@ -185,10 +232,11 @@ export function WatchApp() {
         <Box flexDirection="column" marginLeft={1} justifyContent="center">
           <Text color="cyan" bold>pux</Text>
           <Text dimColor>watching {pipelineCount} pipeline{pipelineCount !== 1 ? "s" : ""}</Text>
+          {commit && <Text dimColor>commit {commit.slice(0, 7)}</Text>}
         </Box>
       </Box>
 
-      {repository && <Text>✓ Repository: {repository}</Text>}
+      {repository && <Text dimColor>  repo: {repository}</Text>}
 
       {providerStates.map((state) => (
         <Box key={state.provider.name} flexDirection="column" marginTop={1}>
@@ -204,7 +252,7 @@ export function WatchApp() {
         <Box marginTop={1}><Text color="green">✓ Connected CI context to {agentInstructions.added.join(", ")}</Text></Box>
       )}
 
-      <Box marginTop={1}><Text dimColor>press q to quit</Text></Box>
+      <Box marginTop={1}><Text dimColor>Live · press q to quit</Text></Box>
     </Box>
   );
 }
@@ -285,11 +333,24 @@ function PipelineRow({ pipeline, providerName }: { pipeline: Pipeline; providerN
   const symbol = pipeline.status === "failed" ? "✗"
     : pipeline.status === "completed" ? "✓"
     : pipeline.status === "building" ? "◌"
+    : pipeline.status === "queued" ? "⧖"
     : "·";
   const color = pipeline.status === "failed" ? "red"
     : pipeline.status === "completed" ? "green"
     : pipeline.status === "building" ? "yellow"
     : undefined;
+
+  const statusLabel = pipeline.status === "failed" ? "Failed"
+    : pipeline.status === "completed" ? "Completed"
+    : pipeline.status === "building" ? "In progress"
+    : pipeline.status === "queued" ? "Queued"
+    : pipeline.status === "cancelled" ? "Cancelled"
+    : "";
+
+  const steps = pipeline.steps ?? [];
+  const completedJobs = steps.filter((s) => s.status === "completed").length;
+  const totalJobs = steps.length;
+  const jobProgress = totalJobs > 0 ? `${completedJobs}/${totalJobs} jobs` : "";
 
   return (
     <Box flexDirection="column">
@@ -297,14 +358,21 @@ function PipelineRow({ pipeline, providerName }: { pipeline: Pipeline; providerN
         <Text color={color}>{symbol} </Text>
         <Text bold>{providerName}</Text>
         <Text> · {pipeline.name}</Text>
+        <Text> #{pipeline.id.slice(-6)}</Text>
         {pipeline.actor && <Text dimColor> · {pipeline.actor}</Text>}
       </Text>
-      {pipeline.steps && pipeline.steps.length > 0 && (
+      <Text>
+        <Text>  </Text>
+        <Text color={color}>{statusLabel}</Text>
+        {jobProgress && <Text dimColor> · {jobProgress}</Text>}
+        {pipeline.commit && <Text dimColor> · {pipeline.commit}</Text>}
+      </Text>
+      {steps.length > 0 && (
         <Box flexDirection="column" marginLeft={4}>
-          {pipeline.steps.map((step, i) => {
+          {steps.map((step, i) => {
             const stepSymbol = step.status === "failed" ? "✗" : step.status === "completed" ? "✓" : step.status === "building" ? "◌" : "·";
             const stepColor = step.status === "failed" ? "red" : step.status === "completed" ? "green" : step.status === "building" ? "yellow" : undefined;
-            return <Text key={i} color={stepColor}>{stepSymbol} {step.name}</Text>;
+            return <Text key={i} color={stepColor}>  {stepSymbol} {step.name}</Text>;
           })}
         </Box>
       )}

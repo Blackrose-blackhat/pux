@@ -91,6 +91,7 @@ export const githubProvider: Provider = {
           status: mapStatus(run),
           actor: actorLogin || null,
           url: `https://github.com/${repository}/actions/runs/${run.databaseId}`,
+          commit: run.headSha?.slice(0, 7) || null,
           steps: flattenSteps(detail?.jobs ?? []),
         };
       })

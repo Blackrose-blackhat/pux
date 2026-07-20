@@ -84,6 +84,7 @@ export const vercelProvider: Provider = {
           status: mapStatus(d.state),
           actor: d.creator?.username || null,
           url: `https://${d.url}`,
+          commit: d.meta?.githubCommitSha?.slice(0, 7) || null,
         })),
       };
     }
@@ -95,6 +96,7 @@ export const vercelProvider: Provider = {
       status: mapStatus(d.state),
       actor: d.creator?.username || null,
       url: `https://${d.url}`,
+      commit: d.meta?.githubCommitSha?.slice(0, 7) || null,
     }));
 
     return { kind: "active", pipelines };
