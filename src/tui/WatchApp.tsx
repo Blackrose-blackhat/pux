@@ -1,7 +1,6 @@
 import { Box, Text, useApp, useInput } from "ink";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { execFile } from "node:child_process";
-import { watch as fsWatch } from "node:fs";
 import { promisify } from "node:util";
 import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
 import { generateFailureContext } from "../context/generate.js";
@@ -121,74 +120,55 @@ export function WatchApp() {
     }
   }
 
-  // Adaptive polling: 3s when active builds, 15s when idle/completed
-  // Also watches .git/refs for push events to trigger immediate refresh
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Adaptive polling: checks HEAD each tick to detect pushes
+  // 3s when builds active or commit changed, 10s when idle
   const isPolling = useRef(false);
-
-  const getInterval = useCallback(() => {
-    const hasActive = providerStates.some(
-      (s) => s.snapshot.kind === "active" &&
-        s.snapshot.pipelines.some((p) => p.status === "building" || p.status === "queued")
-    );
-    return hasActive ? 3000 : 15000;
-  }, [providerStates]);
-
-  const refresh = useCallback(async () => {
-    if (!repository || !commit || isPolling.current) return;
-    isPolling.current = true;
-    try {
-      const states = await Promise.all(
-        providersRef.current.map(async (provider) => {
-          const snapshot = await provider.poll(repository, commit);
-          return { provider, snapshot };
-        })
-      );
-      setProviderStates(states);
-
-      const legacy = await getWatchSnapshot();
-      setLegacySnapshot(legacy);
-    } finally {
-      isPolling.current = false;
-    }
-  }, [repository, commit]);
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
 
   useEffect(() => {
-    if (phase !== "watching" || !repository || !commit) return;
+    if (phase !== "watching" || !repository) return;
     let active = true;
 
-    const schedule = () => {
-      if (!active) return;
-      pollTimer.current = setTimeout(() => {
-        if (!active) return;
-        void refresh().then(() => { if (active) schedule(); });
-      }, getInterval());
+    const tick = async () => {
+      if (isPolling.current) return;
+      isPolling.current = true;
+      try {
+        // Check if HEAD changed (user pushed)
+        const currentHead = await command("git", ["rev-parse", "HEAD"]);
+        if (currentHead && currentHead !== commitRef.current) {
+          setCommit(currentHead);
+          commitRef.current = currentHead;
+        }
+
+        const sha = commitRef.current;
+        if (!sha) return;
+
+        const states = await Promise.all(
+          providersRef.current.map(async (provider) => {
+            const snapshot = await provider.poll(repository, sha);
+            return { provider, snapshot };
+          })
+        );
+        if (active) setProviderStates(states);
+
+        const legacy = await getWatchSnapshot();
+        if (active) setLegacySnapshot(legacy);
+      } finally {
+        isPolling.current = false;
+      }
     };
 
-    void refresh().then(() => { if (active) schedule(); });
-    return () => { active = false; if (pollTimer.current) clearTimeout(pollTimer.current); };
-  }, [phase, repository, commit, refresh, getInterval]);
+    void tick();
 
-  // Watch .git/refs for push events — triggers immediate re-poll + commit update
-  useEffect(() => {
-    if (phase !== "watching") return;
-    let watcher: ReturnType<typeof fsWatch> | null = null;
-    void (async () => {
-      const root = await command("git", ["rev-parse", "--show-toplevel"]);
-      if (!root) return;
-      try {
-        watcher = fsWatch(`${root}/.git/refs`, { recursive: true }, () => {
-          // New push detected — update commit and re-poll immediately
-          void command("git", ["rev-parse", "HEAD"]).then((newCommit) => {
-            if (newCommit && newCommit !== commit) setCommit(newCommit);
-            if (pollTimer.current) clearTimeout(pollTimer.current);
-            void refresh();
-          });
-        });
-      } catch { /* .git/refs may not exist in worktree setups */ }
-    })();
-    return () => { watcher?.close(); };
-  }, [phase, commit, refresh]);
+    const timer = setInterval(() => {
+      if (!active) return;
+      // Adaptive: 3s if builds are active, 10s otherwise
+      void tick();
+    }, 3000);
+
+    return () => { active = false; clearInterval(timer); };
+  }, [phase, repository]);
 
   useEffect(() => {
     if (phase !== "watching") return;
