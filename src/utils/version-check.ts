@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -8,6 +9,16 @@ const execFileAsync = promisify(execFile);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
+
+function askUser(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === "y");
+    });
+  });
+}
 
 export async function checkForUpdate(): Promise<string | null> {
   try {
@@ -28,7 +39,15 @@ export async function autoUpdate(): Promise<boolean> {
   if (!latest) return false;
 
   const current = pkg.version;
-  console.log(`\x1b[33m⚠ pux ${current} → ${latest} available. Updating...\x1b[0m`);
+  console.log(`\x1b[33m⚠ pux ${current} → ${latest} available.\x1b[0m`);
+
+  const shouldUpdate = await askUser(`  Update now? [Y/n] `);
+  if (!shouldUpdate) {
+    console.log(`\x1b[2m  Skipped. Run \`npm install -g pux.sh@latest\` to update manually.\x1b[0m\n`);
+    return false;
+  }
+
+  console.log(`\x1b[33m  Updating...\x1b[0m`);
 
   try {
     await execFileAsync("npm", ["install", "-g", "pux.sh@latest"], {
@@ -38,7 +57,6 @@ export async function autoUpdate(): Promise<boolean> {
     console.log(`\x1b[32m✓ Updated to pux ${latest}\x1b[0m\n`);
     return true;
   } catch {
-    // Fallback: try with sudo on unix
     if (process.platform !== "win32") {
       try {
         await execFileAsync("sudo", ["npm", "install", "-g", "pux.sh@latest"], {
@@ -48,11 +66,11 @@ export async function autoUpdate(): Promise<boolean> {
         console.log(`\x1b[32m✓ Updated to pux ${latest}\x1b[0m\n`);
         return true;
       } catch {
-        console.log(`\x1b[31m✗ Auto-update failed. Run manually: npm install -g pux.sh\x1b[0m\n`);
+        console.log(`\x1b[31m✗ Auto-update failed. Run manually: npm install -g pux.sh@latest\x1b[0m\n`);
         return false;
       }
     }
-    console.log(`\x1b[31m✗ Auto-update failed. Run manually: npm install -g pux.sh\x1b[0m\n`);
+    console.log(`\x1b[31m✗ Auto-update failed. Run manually: npm install -g pux.sh@latest\x1b[0m\n`);
     return false;
   }
 }

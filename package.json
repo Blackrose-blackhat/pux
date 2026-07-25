@@ -16,7 +16,8 @@
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "release": "node scripts/release.mjs"
   },
   "keywords": [
     "ci",

@@ -73,7 +73,7 @@ Context Generator (assembles AI-ready failure report)
 UI (menu bar notification + popover)
 ```
 
-When a workflow fails, Pux writes a structured context file containing:
+When a workflow fails, Pux writes a stable latest-entry file plus a timestamped artifact bundle containing:
 
 - Failed job, step, and exit code
 - Relevant stacktrace (not 8000 lines — just the signal)
@@ -81,6 +81,8 @@ When a workflow fails, Pux writes a structured context file containing:
 - Changed file list
 - Workflow YAML
 - Package manifest and config files (only if relevant)
+- Raw failed-step logs and trimmed log excerpts
+- Metadata that points back to the exact captured run
 
 This context is designed to be dropped directly into any AI coding agent.
 
@@ -149,7 +151,7 @@ Live terminal dashboard. Watches the GitHub Actions run for your current commit.
  Refreshes every 3s · press q to quit
 ```
 
-On failure, automatically generates `.ai-context/failure.md` and connects it to your AI agents (Claude Code, Codex, Cursor, Copilot, etc).
+On failure, automatically refreshes `.ai-context/failure.md` for the latest run, stores the full capture under `.ai-context/failures/YYYY/MM/DD/...`, and connects that context to your AI agents (Claude Code, Codex, Cursor, Copilot, etc).
 
 ### `pux doctor`
 
@@ -176,7 +178,7 @@ When a failure is detected, Pux injects a context pointer into whichever agent i
 | Windsurf | `.windsurfrules` |
 | Cline | `.clinerules` |
 
-The instruction tells the agent to read `.ai-context/failure.md` before diagnosing CI failures.
+The instruction tells the agent to read `.ai-context/failure.md` before diagnosing CI failures. That file acts as a stable pointer to the newest failure bundle under `.ai-context/failures/`.
 
 ---
 

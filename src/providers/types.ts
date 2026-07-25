@@ -21,4 +21,5 @@ export interface Provider {
   detect(root: string): Promise<boolean>;
   poll(repository: string, commit: string): Promise<ProviderSnapshot>;
   getLogs(pipeline: Pipeline): Promise<string | null>;
+  rerun?(pipeline: Pipeline): Promise<boolean>;
 }

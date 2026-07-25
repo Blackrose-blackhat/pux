@@ -61,19 +61,22 @@ Returns typed snapshots (`WatchSnapshot`) that describe the current state of the
 
 ### `src/context/generate.ts`
 
-The core product logic. Takes a failed run snapshot and produces `.ai-context/failure.md`.
+The core product logic. Takes a failed run snapshot, writes a timestamped artifact bundle under `.ai-context/failures/`, and refreshes `.ai-context/failure.md` as a stable latest pointer.
 
 Steps:
 1. Download failed step logs
 2. Extract the relevant signal (regex window around first error)
 3. Collect git diff and changed file list
 4. Read relevant config files (package.json, Dockerfile, workflow YAMLs)
-5. Assemble into structured markdown
+5. Persist structured artifacts (logs, diff, metadata, copied context files)
+6. Assemble the latest summary markdown entrypoint
 
 **Design decisions:**
 - Log extraction uses a signal window (12 lines before first error match, 120 lines max) rather than dumping everything
 - Config files are capped at 20KB to prevent blowup
 - Fenced code blocks are escaped to prevent markdown injection
+- Failure bundles are timestamped by run start time so multiple incidents can coexist without overwriting each other
+- `.ai-context/` is automatically added to the repo `.gitignore` so bulky local artifacts do not inflate version history
 
 ### `src/agents/instructions.ts`
 
@@ -111,8 +114,9 @@ Checks for `git` and `gh` in PATH. Reports availability. Used for onboarding tro
 4. UI renders based on snapshot.kind
 5. On snapshot.kind === "run" && conclusion === "failure":
    a. generateFailureContext(snapshot) is called once per run
-   b. Writes .ai-context/failure.md
-   c. ensureAgentInstructions() connects context to agents
+   b. Writes a new `.ai-context/failures/YYYY/MM/DD/...` bundle
+   c. Refreshes `.ai-context/failure.md` to point at the newest bundle
+   d. ensureAgentInstructions() connects context to agents
 ```
 
 ---

@@ -18,6 +18,23 @@ type ProviderState = {
   snapshot: ProviderSnapshot;
 };
 
+const agentIcons: Record<string, string> = {
+  "Claude Code": "✦",
+  "Codex": "◈",
+  "Cursor": "⌁",
+  "Gemini CLI": "◇",
+  "Windsurf": "≋",
+  "Cline": "⟡",
+  "GitHub Copilot": "⬡",
+  "Aider": "⊕",
+  "Amazon Q": "◆",
+};
+
+function formatAgent(name: string): string {
+  const icon = agentIcons[name] ?? "·";
+  return `${icon} ${name}`;
+}
+
 export function WatchApp() {
   const { exit } = useApp();
   const [phase, setPhase] = useState<Phase>("setup");
@@ -34,6 +51,7 @@ export function WatchApp() {
   const [contextStatus, setContextStatus] = useState<"idle" | "generating" | "written" | "error">("idle");
   const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
   const [legacySnapshot, setLegacySnapshot] = useState<WatchSnapshot>({ kind: "checking" });
+  const [rerunStatus, setRerunStatus] = useState<"idle" | "rerunning" | "done" | "error">("idle");
   const generatedFor = useRef<string | null>(null);
   const providersRef = useRef<Provider[]>([]);
 
@@ -65,6 +83,22 @@ export function WatchApp() {
         void runInstall(missingDeps[installIndex].install);
       } else if (input === "n" || input === "N") {
         moveToNext();
+      }
+      return;
+    }
+
+    if (input === "r" && rerunStatus !== "rerunning") {
+      const failedState = providerStates.find((s) =>
+        s.snapshot.kind === "active" && s.snapshot.pipelines.some((p) => p.status === "failed")
+      );
+      if (failedState && failedState.snapshot.kind === "active" && failedState.provider.rerun) {
+        const failedPipeline = failedState.snapshot.pipelines.find((p) => p.status === "failed");
+        if (failedPipeline) {
+          setRerunStatus("rerunning");
+          void failedState.provider.rerun(failedPipeline)
+            .then((ok) => setRerunStatus(ok ? "done" : "error"))
+            .catch(() => setRerunStatus("error"));
+        }
       }
       return;
     }
@@ -211,12 +245,10 @@ export function WatchApp() {
         <Pet mood={mood} />
         <Box flexDirection="column" marginLeft={1} justifyContent="center">
           <Text color="cyan" bold>pux</Text>
-          <Text dimColor>watching {pipelineCount} pipeline{pipelineCount !== 1 ? "s" : ""}</Text>
-          {commit && <Text dimColor>commit {commit.slice(0, 7)}</Text>}
+          {repository && <Text dimColor>{repository}</Text>}
+          {commit && <Text dimColor>{commit.slice(0, 7)}</Text>}
         </Box>
       </Box>
-
-      {repository && <Text dimColor>  repo: {repository}</Text>}
 
       {providerStates.map((state) => (
         <Box key={state.provider.name} flexDirection="column" marginTop={1}>
@@ -224,15 +256,19 @@ export function WatchApp() {
         </Box>
       ))}
 
-      {hasFailure && contextStatus === "generating" && <Box marginTop={1}><Text color="yellow">◌ Downloading logs…</Text></Box>}
-      {hasFailure && contextStatus === "written" && <Box marginTop={1}><Text color="green">✓ Wrote .ai-context/failure.md</Text></Box>}
-      {hasFailure && contextStatus === "error" && <Box marginTop={1}><Text color="red">✗ Could not create .ai-context/failure.md</Text></Box>}
+      {hasFailure && contextStatus === "generating" && <Box marginTop={1}><Text color="yellow">  ◌ Downloading logs…</Text></Box>}
+      {hasFailure && contextStatus === "written" && <Box marginTop={1}><Text color="green">  √ Wrote failure context</Text></Box>}
+      {hasFailure && contextStatus === "error" && <Box marginTop={1}><Text color="red">  ✗ Could not create failure context</Text></Box>}
+
+      {rerunStatus === "rerunning" && <Box marginTop={1}><Text color="yellow">  ◌ Re-running…</Text></Box>}
+      {rerunStatus === "done" && <Box marginTop={1}><Text color="green">  √ Re-run triggered</Text></Box>}
+      {rerunStatus === "error" && <Box marginTop={1}><Text color="red">  ✗ Re-run failed</Text></Box>}
 
       {agentInstructions && agentInstructions.added.length > 0 && (
-        <Box marginTop={1}><Text color="green">✓ Connected CI context to {agentInstructions.added.join(", ")}</Text></Box>
+        <Box marginTop={1}><Text dimColor>  → Connected to {agentInstructions.added.map(formatAgent).join("  ")}</Text></Box>
       )}
 
-      <Box marginTop={1}><Text dimColor>Live · press q to quit</Text></Box>
+      <Box marginTop={1}><Text dimColor>  {hasFailure ? "press r to re-run · q to quit" : "press q to quit"}</Text></Box>
     </Box>
   );
 }
@@ -294,65 +330,61 @@ function ProviderSection({ state }: { state: ProviderState }) {
   const { provider, snapshot } = state;
 
   if (snapshot.kind === "unavailable") {
-    return <Text dimColor>{provider.name} · unavailable</Text>;
+    return <Text dimColor>  {provider.name} · unavailable</Text>;
   }
   if (snapshot.kind === "waiting") {
-    return <Text color="yellow">◌ {provider.name} · waiting…</Text>;
+    return <Text color="yellow">  ◌ {provider.name} · waiting…</Text>;
   }
+
+  const pipelines = snapshot.pipelines;
+  const allDone = pipelines.every((p) => p.status === "completed");
+  const hasFailed = pipelines.some((p) => p.status === "failed");
+  const headerColor = hasFailed ? "red" : allDone ? "green" : "yellow";
 
   return (
     <Box flexDirection="column">
-      {snapshot.pipelines.map((pipeline) => (
-        <PipelineRow key={pipeline.id} pipeline={pipeline} providerName={provider.name} />
+      <Text bold color={headerColor}>{provider.name}</Text>
+      {pipelines.map((pipeline) => (
+        <PipelineRow key={pipeline.id} pipeline={pipeline} />
       ))}
     </Box>
   );
 }
 
-function PipelineRow({ pipeline, providerName }: { pipeline: Pipeline; providerName: string }) {
+function PipelineRow({ pipeline }: { pipeline: Pipeline }) {
   const symbol = pipeline.status === "failed" ? "✗"
-    : pipeline.status === "completed" ? "✓"
+    : pipeline.status === "completed" ? "√"
     : pipeline.status === "building" ? "◌"
     : pipeline.status === "queued" ? "⧖"
     : "·";
   const color = pipeline.status === "failed" ? "red"
-    : pipeline.status === "completed" ? "green"
     : pipeline.status === "building" ? "yellow"
     : undefined;
-
-  const statusLabel = pipeline.status === "failed" ? "Failed"
-    : pipeline.status === "completed" ? "Completed"
-    : pipeline.status === "building" ? "In progress"
-    : pipeline.status === "queued" ? "Queued"
-    : pipeline.status === "cancelled" ? "Cancelled"
-    : "";
 
   const steps = pipeline.steps ?? [];
   const completedJobs = steps.filter((s) => s.status === "completed").length;
   const totalJobs = steps.length;
-  const jobProgress = totalJobs > 0 ? `${completedJobs}/${totalJobs} jobs` : "";
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginLeft={2}>
       <Text>
-        <Text color={color}>{symbol} </Text>
-        <Text bold>{providerName}</Text>
-        <Text> · {pipeline.name}</Text>
-        <Text> #{pipeline.id.slice(-6)}</Text>
-        {pipeline.actor && <Text dimColor> · {pipeline.actor}</Text>}
+        <Text color={color}>{symbol}</Text>
+        <Text> {pipeline.name}</Text>
+        {pipeline.id && <Text dimColor> #{pipeline.id.slice(-6)}</Text>}
       </Text>
-      <Text>
-        <Text>  </Text>
-        <Text color={color}>{statusLabel}</Text>
-        {jobProgress && <Text dimColor> · {jobProgress}</Text>}
-        {pipeline.commit && <Text dimColor> · {pipeline.commit}</Text>}
+      <Text dimColor>
+        {"    "}
+        {pipeline.status === "completed" ? "Completed" : pipeline.status === "failed" ? "Failed" : pipeline.status === "building" ? "In progress" : pipeline.status === "queued" ? "Queued" : "Cancelled"}
+        {totalJobs > 0 && ` · ${completedJobs}/${totalJobs} jobs`}
+        {pipeline.commit && ` · ${pipeline.commit}`}
+        {pipeline.actor && ` · ${pipeline.actor}`}
       </Text>
       {steps.length > 0 && (
-        <Box flexDirection="column" marginLeft={4}>
+        <Box flexDirection="column" marginLeft={3}>
           {steps.map((step, i) => {
-            const stepSymbol = step.status === "failed" ? "✗" : step.status === "completed" ? "✓" : step.status === "building" ? "◌" : "·";
-            const stepColor = step.status === "failed" ? "red" : step.status === "completed" ? "green" : step.status === "building" ? "yellow" : undefined;
-            return <Text key={i} color={stepColor}>  {stepSymbol} {step.name}</Text>;
+            const stepSymbol = step.status === "failed" ? "✗" : step.status === "completed" ? "√" : step.status === "building" ? "◌" : "·";
+            const stepColor = step.status === "failed" ? "red" : step.status === "building" ? "yellow" : undefined;
+            return <Text key={i} dimColor><Text color={stepColor}>{stepSymbol}</Text> {step.name}</Text>;
           })}
         </Box>
       )}

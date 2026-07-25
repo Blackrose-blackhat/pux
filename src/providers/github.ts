@@ -111,4 +111,9 @@ export const githubProvider: Provider = {
   async getLogs(pipeline: Pipeline): Promise<string | null> {
     return command("gh", ["run", "view", pipeline.id, "--log-failed"]);
   },
+
+  async rerun(pipeline: Pipeline): Promise<boolean> {
+    const result = await command("gh", ["run", "rerun", pipeline.id]);
+    return result !== null;
+  },
 };
