@@ -1,7 +1,21 @@
 export function Footer() {
   return (
     <footer className="flex flex-col items-center px-4 py-12 mt-auto border-t border-[#1a1a1a]">
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-3">
+        <a
+          href="https://www.producthunt.com/products/pux-sh?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-pux-sh"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 transition-opacity hover:opacity-85"
+        >
+          <img
+            src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1219394&theme=dark&t=1786360071365"
+            alt="pux.sh - Your tiny cat that watches your builds. | Product Hunt"
+            width={250}
+            height={54}
+            className="h-[54px] w-[250px]"
+          />
+        </a>
         <a
           href="https://github.com/Blackrose-blackhat/pux"
           target="_blank"
