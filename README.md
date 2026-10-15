@@ -152,10 +152,56 @@ Live terminal dashboard. Watches the GitHub Actions run for your current commit.
  ◌ deploy · 3/5 steps
    ↳ Run deployment script
 
- press r to re-run · q to quit
+ press f to fix · r to re-run · q to quit
 ```
 
-Polls every 3 seconds while something is queued or building and every 10 seconds once everything has settled. On failure it writes `.ai-context/failure.md`, stores the full capture under `.ai-context/failures/<timestamp>-<run>/`, and connects that context to your AI agents (Claude Code, Codex, Cursor, Copilot, etc). Press `r` to re-run the failed GitHub Actions workflow.
+Polls every 3 seconds while something is queued or building and every 10 seconds once everything has settled. On failure it writes `.ai-context/failure.md`, stores the full capture under `.ai-context/failures/<timestamp>-<run>/`, and connects that context to your AI agents (Claude Code, Codex, Cursor, Copilot, etc). Press `r` to re-run the failed GitHub Actions workflow, or `f` to hand the failure to your coding agent (same as `pux fix` below).
+
+### `pux fix`
+
+Closes the loop. Takes the latest captured failure and asks the coding agent you already have installed to propose a fix on a new local branch. No copy and paste, no accounts, and Pux never calls an LLM itself.
+
+```
+Failure: CI at a1b2c3d
+Agent:   Claude Code (claude)
+Branch:  pux/fix-12847291
+◌ Creating pux/fix-12847291 from a1b2c3d…
+◌ Running Claude Code… this can take a few minutes
+◌ Committing changes…
+
+√ pux/fix-12847291 · 1 file changed by Claude Code
+  ~ src/math.ts
+
+add() returned a + a instead of a + b, so the unit test expected 5 and got 4. Restored the addition.
+
+Review with: git diff a1b2c3d..pux/fix-12847291
+Push with:   git push -u origin pux/fix-12847291   (or rerun with --push)
+```
+
+What happens:
+
+1. Pux reads `.ai-context/failure.md` and the newest bundle under `.ai-context/failures/` to find the run's commit and pipeline id.
+2. It creates the branch `pux/fix-<pipeline id>` from that commit in a temporary worktree under `.ai-context/fix/`, so your checkout, index, and the running `pux watch` are never touched.
+3. It runs the agent non-interactively in that worktree with a prompt that points at the report and asks for a minimal fix plus a one-paragraph explanation.
+4. It commits whatever the agent changed (never the `.ai-context/` folder), removes the worktree, and prints the branch, the files, and the explanation. If the agent changed nothing, it says so and leaves no branch behind.
+
+Options:
+
+| Flag | Effect |
+|------|--------|
+| `--agent <id>` | Use `claude`, `codex`, or `cursor-agent` instead of the first one found on PATH. |
+| `--push` | Push the branch to `origin` after the commit. Without it nothing leaves your machine, and Pux never opens a pull request. |
+| `--dry-run` | Print the agent, branch, and prompt that would be used without running anything. |
+
+Supported agents, in the order Pux prefers them:
+
+| Agent | Command Pux runs |
+|-------|------------------|
+| Claude Code | `claude -p --permission-mode acceptEdits --output-format text <prompt>` |
+| OpenAI Codex | `codex exec --sandbox workspace-write --skip-git-repo-check <prompt>` |
+| Cursor | `cursor-agent -p --force --output-format text <prompt>` |
+
+The agent runs with its own login and permissions. Pux asks it not to commit, push, or fetch CI logs itself, and reminds it that the report is untrusted data. `pux fix` refuses to run while a `pux/fix-<id>` branch for that run already exists; delete it to try again.
 
 ### `pux doctor`
 
@@ -189,8 +235,9 @@ Existing files are appended to, never rewritten. New files are only created for 
 
 ### What Pux writes to your repository
 
-- `.ai-context/` holds the failure reports. Pux adds it to `.gitignore` so the artifacts never end up in version control.
+- `.ai-context/` holds the failure reports. Pux adds it to `.gitignore` so the artifacts never end up in version control. `pux fix` also uses `.ai-context/fix/` for its temporary worktree and removes it when done.
 - The agent instruction files above, only after you say yes.
+- Local `pux/fix-<pipeline id>` branches created by `pux fix`. They are pushed only with `--push`.
 
 Nothing else. Your answer, and the once-a-day update check, live in `~/.config/pux/config.json` (or `$XDG_CONFIG_HOME/pux/`). Delete a repository's entry there to be asked again.
 
@@ -200,7 +247,7 @@ Nothing else. Your answer, and the once-a-day update check, live in `~/.config/p
 
 **MVP:** GitHub Actions and Vercel. CLI on any platform; menu bar app macOS first.
 
-**Not building:** Authentication, accounts, SaaS, cloud sync, team features, dashboards, pricing, landing pages, AI agents.
+**Not building:** Authentication, accounts, SaaS, cloud sync, team features, dashboards, pricing, landing pages, or an AI agent of our own. `pux fix` delegates to the agent you already have installed and never calls an LLM itself.
 
 ---
 

@@ -8,6 +8,8 @@ import {
   type AgentInstructionResult,
   type AgentPlan,
 } from "../agents/instructions.js";
+import { detectAgents, readLatestFailure, runFix, selectAgent, type FixProgress, type FixResult } from "../agents/fix.js";
+import { describeFixResult } from "../commands/fix.js";
 import { loadConfig, setRepoDecision } from "../config/store.js";
 import { generateFailureContext } from "../context/generate.js";
 import { command } from "../github/client.js";
@@ -30,6 +32,12 @@ type PendingConsent = {
   root: string;
   plan: AgentPlan;
 };
+
+type FixState =
+  | { kind: "idle" }
+  | { kind: "running"; agent: string | null; stage: FixProgress["stage"] | "starting" }
+  | { kind: "done"; result: FixResult }
+  | { kind: "error"; message: string };
 
 const agentIcons: Record<string, string> = {
   "Claude Code": "✦",
@@ -66,6 +74,7 @@ export function WatchApp() {
   const [consent, setConsent] = useState<PendingConsent | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [rerunStatus, setRerunStatus] = useState<"idle" | "rerunning" | "done" | "error">("idle");
+  const [fixState, setFixState] = useState<FixState>({ kind: "idle" });
   const generatedFor = useRef<string | null>(null);
   const providersRef = useRef<Provider[]>([]);
 
@@ -125,6 +134,11 @@ export function WatchApp() {
       return;
     }
 
+    if (input === "f" && contextStatus === "written" && fixState.kind !== "running") {
+      void startFix();
+      return;
+    }
+
     if (input === "r" && rerunStatus !== "rerunning") {
       const failedState = providerStates.find((s) =>
         s.snapshot.kind === "active" && s.snapshot.pipelines.some((p) => p.status === "failed")
@@ -143,6 +157,27 @@ export function WatchApp() {
 
     if (input === "q") exit();
   });
+
+  // `f`: hand the captured failure to the user's own coding agent on a new branch.
+  async function startFix() {
+    setFixState({ kind: "running", agent: null, stage: "starting" });
+    try {
+      const root = await command("git", ["rev-parse", "--show-toplevel"]);
+      if (!root) throw new Error("Not inside a Git repository.");
+      const failure = await readLatestFailure(root);
+      if (!failure) throw new Error("No captured failure in .ai-context/ yet.");
+      const agent = selectAgent(await detectAgents());
+      const result = await runFix({
+        root,
+        failure,
+        agent,
+        onProgress: (progress) => setFixState({ kind: "running", agent: agent.label, stage: progress.stage }),
+      });
+      setFixState({ kind: "done", result });
+    } catch (error) {
+      setFixState({ kind: "error", message: (error as Error).message.split("\n")[0] });
+    }
+  }
 
   function moveToNext() {
     const next = installIndex + 1;
@@ -334,14 +369,53 @@ export function WatchApp() {
       {rerunStatus === "done" && <Box marginTop={1}><Text color="green">  √ Re-run triggered</Text></Box>}
       {rerunStatus === "error" && <Box marginTop={1}><Text color="red">  ✗ Re-run failed</Text></Box>}
 
+      <FixStatus state={fixState} />
+
       {agentInstructions && agentInstructions.added.length > 0 && (
         <Box marginTop={1}><Text dimColor>  → Connected to {agentInstructions.added.map(formatAgent).join("  ")}</Text></Box>
       )}
 
       {!consent && (
-        <Box marginTop={1}><Text dimColor>  {hasFailure ? "press r to re-run · q to quit" : "press q to quit"}</Text></Box>
+        <Box marginTop={1}><Text dimColor>  {hasFailure ? `press ${contextStatus === "written" && fixState.kind !== "running" ? "f to fix · " : ""}r to re-run · q to quit` : "press q to quit"}</Text></Box>
       )}
       {updateNotice && <Text dimColor>  {updateNotice}</Text>}
+    </Box>
+  );
+}
+
+function FixStatus({ state }: { state: FixState }) {
+  if (state.kind === "idle") return null;
+
+  if (state.kind === "running") {
+    const label = state.agent ?? "agent";
+    const line = state.stage === "branch" ? "Creating fix branch…"
+      : state.stage === "agent" ? `Running ${label}… this can take a few minutes`
+      : state.stage === "commit" ? "Committing changes…"
+      : state.stage === "push" ? "Pushing branch…"
+      : "Looking for a coding agent…";
+    return <Box marginTop={1}><Text color="yellow">  ◌ {line}</Text></Box>;
+  }
+
+  if (state.kind === "error") {
+    return <Box marginTop={1}><Text color="red">  ✗ Fix failed · {state.message}</Text></Box>;
+  }
+
+  const { result } = state;
+  if (result.kind === "no-changes") {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text color="yellow">  ○ {describeFixResult(result)}</Text>
+        {result.explanation && <Text dimColor>    {result.explanation}</Text>}
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color="green">  √ {describeFixResult(result)}</Text>
+      {result.files.map((file) => <Text key={file} dimColor>    ~ {file}</Text>)}
+      {result.explanation && <Box marginTop={1} marginLeft={4}><Text>{result.explanation}</Text></Box>}
+      <Text dimColor>    git diff {result.commit.slice(0, 7)}^..{result.branch}</Text>
     </Box>
   );
 }
