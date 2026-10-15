@@ -1,8 +1,8 @@
 class Pux < Formula
   desc "Ambient CI companion – watches pipelines and generates AI-ready failure context"
   homepage "https://github.com/Blackrose-blackhat/pux"
-  url "https://registry.npmjs.org/pux.sh/-/pux.sh-0.1.4.tgz"
-  sha256 "5664316ec682573417feaefc912ab38911db335ce2fda761a44b65c45059cfe7"
+  url "https://registry.npmjs.org/pux.sh/-/pux.sh-0.1.5.tgz"
+  sha256 "c8d3eae160a892e32837db3dcae515e843e5383fef52b8141940c8bcf8b6d59f"
   license "MIT"
 
   depends_on "node@22"
