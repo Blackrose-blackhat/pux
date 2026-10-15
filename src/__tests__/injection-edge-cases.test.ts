@@ -46,7 +46,7 @@ describe("injection edge cases", () => {
   it("handles empty CLAUDE.md", async () => {
     await writeFile(join(tempDir, "CLAUDE.md"), "");
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).toContain("Claude Code");
     const content = await readFile(join(tempDir, "CLAUDE.md"), "utf8");
@@ -57,7 +57,7 @@ describe("injection edge cases", () => {
   it("handles CLAUDE.md with only whitespace", async () => {
     await writeFile(join(tempDir, "CLAUDE.md"), "   \n\n  \n");
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).toContain("Claude Code");
     const content = await readFile(join(tempDir, "CLAUDE.md"), "utf8");
@@ -67,7 +67,7 @@ describe("injection edge cases", () => {
   it("handles CLAUDE.md with unicode/emoji content", async () => {
     await writeFile(join(tempDir, "CLAUDE.md"), "# 🚀 Project Rules\n\nUse strict mode always.\n");
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).toContain("Claude Code");
     const content = await readFile(join(tempDir, "CLAUDE.md"), "utf8");
@@ -75,12 +75,9 @@ describe("injection edge cases", () => {
     expect(content).toContain("pux:ci-failure-context");
   });
 
-  // Skipped until the injector takes an explicit plan: today it creates CLAUDE.md
-  // whenever the `claude` binary is installed on the machine, so the result
-  // depends on the developer's environment rather than the repository.
-  it.skip("does not inject into CLAUDE.md if it does not exist", async () => {
+  it("does not inject into CLAUDE.md if it does not exist", async () => {
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).not.toContain("Claude Code");
     expect(result.present).not.toContain("Claude Code");
@@ -88,7 +85,7 @@ describe("injection edge cases", () => {
 
   it("always creates AGENTS.md even if it does not exist", async () => {
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).toContain("Codex");
     const content = await readFile(join(tempDir, "AGENTS.md"), "utf8");
@@ -98,7 +95,7 @@ describe("injection edge cases", () => {
   it("handles partial marker (start without end) gracefully", async () => {
     await writeFile(join(tempDir, "CLAUDE.md"), "# Rules\n\n<!-- pux:ci-failure-context -->\nBroken partial\n");
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     // Has start marker but not end marker — should append again
     // This tests the "corrupted state" edge case
@@ -109,7 +106,7 @@ describe("injection edge cases", () => {
   it("handles .cursorrules file injection", async () => {
     await writeFile(join(tempDir, ".cursorrules"), "Always use TypeScript.\n");
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).toContain("Cursor");
     const content = await readFile(join(tempDir, ".cursorrules"), "utf8");
@@ -120,7 +117,7 @@ describe("injection edge cases", () => {
   it("handles .cursor/rules/ directory injection", async () => {
     await mkdir(join(tempDir, ".cursor", "rules"), { recursive: true });
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).toContain("Cursor");
     const content = await readFile(join(tempDir, ".cursor", "rules", "pux-ci-context.mdc"), "utf8");
@@ -138,7 +135,7 @@ describe("injection edge cases", () => {
     await writeFile(join(tempDir, ".github", "copilot-instructions.md"), "# Copilot\n");
 
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     expect(result.added).toContain("Codex");
     expect(result.added).toContain("Claude Code");
@@ -155,7 +152,7 @@ describe("injection edge cases", () => {
 
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
     // Should not throw — just skip that file
-    const result = await ensureAgentInstructions();
+    const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     // AGENTS.md should still get created
     expect(result.added).toContain("Codex");
@@ -165,9 +162,9 @@ describe("injection edge cases", () => {
     await writeFile(join(tempDir, "CLAUDE.md"), "# Rules\n");
     const { ensureAgentInstructions } = await import("../agents/instructions.js");
 
-    await ensureAgentInstructions();
-    await ensureAgentInstructions();
-    await ensureAgentInstructions();
+    await ensureAgentInstructions({ detectInstalled: async () => [] });
+    await ensureAgentInstructions({ detectInstalled: async () => [] });
+    await ensureAgentInstructions({ detectInstalled: async () => [] });
 
     const content = await readFile(join(tempDir, "CLAUDE.md"), "utf8");
     const matches = content.match(/pux:ci-failure-context/g);

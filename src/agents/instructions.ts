@@ -1,34 +1,12 @@
-import { access, appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { command } from "../github/client.js";
 
-const agentIgnoreRules = [
-  ".ai-context/",
-  ".cursorrules",
-  ".clinerules",
-  ".windsurfrules",
-];
+const aiContextIgnoreRule = ".ai-context/";
 
-async function ensureGitignoreRules(root: string): Promise<void> {
-  const gitignore = join(root, ".gitignore");
-  let existing = "";
-  try {
-    existing = await readFile(gitignore, "utf8");
-  } catch {
-    // .gitignore doesn't exist yet
-  }
-
-  const lines = existing.split("\n").map((l) => l.trim());
-  const missing = agentIgnoreRules.filter((rule) => !lines.includes(rule));
-  if (missing.length === 0) return;
-
-  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
-  await appendFile(gitignore, `${prefix}${missing.join("\n")}\n`, "utf8");
-}
-
-const startMarker = "<!-- pux:ci-failure-context -->";
-const endMarker = "<!-- /pux:ci-failure-context -->";
+export const startMarker = "<!-- pux:ci-failure-context -->";
+export const endMarker = "<!-- /pux:ci-failure-context -->";
 
 const markdownInstruction = `${startMarker}
 ## Pux CI failure context
@@ -48,47 +26,59 @@ alwaysApply: true
 ${markdownInstruction}
 `;
 
+export type PlanAction = "create" | "append" | "present";
+
+export type AgentPlanEntry = {
+  agent: string;
+  /** Path relative to the repository root. */
+  path: string;
+  action: PlanAction;
+};
+
+export type AgentPlan = {
+  entries: AgentPlanEntry[];
+};
+
 export type AgentInstructionResult = {
   added: string[];
   present: string[];
 };
 
+export type PlanOptions = {
+  /** Returns the names of agents installed on this machine. Defaults to scanning PATH and well-known folders. */
+  detectInstalled?: () => Promise<string[]>;
+};
+
+type AgentFile = {
+  agent: string;
+  path: string;
+  /** Content used when the file is created from scratch. Appends always use the markdown block. */
+  content: string;
+  /** Whether to create the file when it is missing and the agent is not installed. */
+  always?: boolean;
+  /** Only append to this file when it already exists; never create it. */
+  appendOnly?: boolean;
+  /** A path whose presence in the repo shows the agent is in use, even when it is not installed here. */
+  evidence?: string;
+};
+
+const agentFiles: AgentFile[] = [
+  { agent: "Codex", path: "AGENTS.md", content: markdownInstruction, always: true },
+  { agent: "Claude Code", path: "CLAUDE.md", content: markdownInstruction },
+  { agent: "Gemini CLI", path: "GEMINI.md", content: markdownInstruction },
+  { agent: "Cursor", path: join(".cursor", "rules", "pux-ci-context.mdc"), content: cursorRule, evidence: join(".cursor", "rules") },
+  { agent: "Cursor", path: ".cursorrules", content: markdownInstruction, appendOnly: true },
+  { agent: "Windsurf", path: ".windsurfrules", content: markdownInstruction },
+  { agent: "Cline", path: ".clinerules", content: markdownInstruction },
+  { agent: "GitHub Copilot", path: join(".github", "copilot-instructions.md"), content: markdownInstruction },
+  { agent: "Aider", path: join(".aider", "conventions.md"), content: markdownInstruction },
+  { agent: "Amazon Q", path: join(".amazonq", "rules", "pux-ci-context.md"), content: markdownInstruction },
+];
+
 async function exists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;
-  } catch {
-    return false;
-  }
-}
-
-async function appendInstruction(path: string, label: string, result: AgentInstructionResult, create = false): Promise<void> {
-  if (!create && !(await exists(path))) return;
-
-  let existing = "";
-  try {
-    existing = await readFile(path, "utf8");
-  } catch {
-    // A new instruction file will be created below.
-  }
-
-  if (existing.includes(startMarker) && existing.includes(endMarker)) {
-    result.present.push(label);
-    return;
-  }
-
-  const separator = existing.trim().length > 0 ? "\n\n" : "";
-  try {
-    await writeFile(path, `${existing.trimEnd()}${separator}${markdownInstruction}\n`, "utf8");
-    result.added.push(label);
-  } catch {
-    // File may be read-only or locked — skip gracefully.
-  }
-}
-
-async function hasDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
   } catch {
     return false;
   }
@@ -101,160 +91,122 @@ async function commandExists(cmd: string): Promise<boolean> {
 
 async function extensionInstalled(id: string): Promise<boolean> {
   const result = await command("code", ["--list-extensions"]);
-  if (!result) return false;
-  return result.toLowerCase().includes(id.toLowerCase());
+  return result !== null && result.toLowerCase().includes(id.toLowerCase());
 }
 
-type AgentDetector = {
-  name: string;
-  detect: () => Promise<boolean>;
-  inject: (root: string, result: AgentInstructionResult) => Promise<void>;
+const detectors: Record<string, () => Promise<boolean>> = {
+  Codex: () => commandExists("codex"),
+  "Claude Code": () => commandExists("claude"),
+  "Gemini CLI": () => commandExists("gemini"),
+  Cursor: async () => (await exists(join(homedir(), ".cursor"))) || commandExists("cursor"),
+  Windsurf: async () => (await exists(join(homedir(), ".windsurf"))) || commandExists("windsurf"),
+  Cline: () => extensionInstalled("saoudrizwan.claude-dev"),
+  "GitHub Copilot": async () =>
+    (await exists(join(homedir(), ".config", "github-copilot"))) || extensionInstalled("github.copilot"),
+  Aider: () => commandExists("aider"),
+  "Amazon Q": () => commandExists("q"),
 };
 
-const agents: AgentDetector[] = [
-  {
-    name: "Codex",
-    detect: () => commandExists("codex"),
-    inject: async (root, result) => {
-      await appendInstruction(join(root, "AGENTS.md"), "Codex", result, true);
-    },
-  },
-  {
-    name: "Claude Code",
-    detect: () => commandExists("claude"),
-    inject: async (root, result) => {
-      await appendInstruction(join(root, "CLAUDE.md"), "Claude Code", result, true);
-    },
-  },
-  {
-    name: "Gemini CLI",
-    detect: () => commandExists("gemini"),
-    inject: async (root, result) => {
-      await appendInstruction(join(root, "GEMINI.md"), "Gemini CLI", result, true);
-    },
-  },
-  {
-    name: "Cursor",
-    detect: async () => {
-      const home = homedir();
-      const cursorDir = join(home, ".cursor");
-      return await exists(cursorDir) || await commandExists("cursor");
-    },
-    inject: async (root, result) => {
-      await appendInstruction(join(root, ".cursorrules"), "Cursor", result);
-      const cursorRules = join(root, ".cursor", "rules");
-      if (await hasDirectory(cursorRules)) {
-        const rulePath = join(cursorRules, "pux-ci-context.mdc");
-        if (await exists(rulePath)) {
-          const content = await readFile(rulePath, "utf8");
-          if (content.includes(startMarker) && content.includes(endMarker)) result.present.push("Cursor");
-          else {
-            await writeFile(rulePath, cursorRule, "utf8");
-            result.added.push("Cursor");
-          }
-        } else {
-          await mkdir(cursorRules, { recursive: true });
-          await writeFile(rulePath, cursorRule, "utf8");
-          result.added.push("Cursor");
-        }
-      } else {
-        await mkdir(cursorRules, { recursive: true });
-        await writeFile(join(cursorRules, "pux-ci-context.mdc"), cursorRule, "utf8");
-        result.added.push("Cursor");
-      }
-    },
-  },
-  {
-    name: "Windsurf",
-    detect: async () => {
-      const home = homedir();
-      return await exists(join(home, ".windsurf")) || await commandExists("windsurf");
-    },
-    inject: async (root, result) => {
-      await appendInstruction(join(root, ".windsurfrules"), "Windsurf", result, true);
-    },
-  },
-  {
-    name: "Cline",
-    detect: () => extensionInstalled("saoudrizwan.claude-dev"),
-    inject: async (root, result) => {
-      await appendInstruction(join(root, ".clinerules"), "Cline", result, true);
-    },
-  },
-  {
-    name: "GitHub Copilot",
-    detect: async () => {
-      const home = homedir();
-      const copilotDir = join(home, ".config", "github-copilot");
-      return await exists(copilotDir) || await extensionInstalled("github.copilot");
-    },
-    inject: async (root, result) => {
-      const ghDir = join(root, ".github");
-      await mkdir(ghDir, { recursive: true });
-      await appendInstruction(join(ghDir, "copilot-instructions.md"), "GitHub Copilot", result, true);
-    },
-  },
-  {
-    name: "Aider",
-    detect: () => commandExists("aider"),
-    inject: async (root, result) => {
-      const aiderDir = join(root, ".aider");
-      await mkdir(aiderDir, { recursive: true });
-      await appendInstruction(join(aiderDir, "conventions.md"), "Aider", result, true);
-    },
-  },
-  {
-    name: "Amazon Q",
-    detect: () => commandExists("q"),
-    inject: async (root, result) => {
-      const qDir = join(root, ".amazonq", "rules");
-      await mkdir(qDir, { recursive: true });
-      await appendInstruction(join(qDir, "pux-ci-context.md"), "Amazon Q", result, true);
-    },
-  },
-];
-
-/**
- * Auto-detects which AI coding agents are installed on the system,
- * then injects pux CI failure context instructions into their config files.
- * Also injects into any existing instruction files found in the repo.
- */
-export async function ensureAgentInstructions(): Promise<AgentInstructionResult> {
-  const root = await command("git", ["rev-parse", "--show-toplevel"]);
-  if (!root) return { added: [], present: [] };
-
-  const result: AgentInstructionResult = { added: [], present: [] };
-
-  await ensureGitignoreRules(root);
-
-  // Detect which agents are installed and inject for them
-  const detected = await Promise.all(
-    agents.map(async (agent) => {
+/** Scans this machine for installed coding agents. */
+export async function detectInstalledAgents(): Promise<string[]> {
+  const results = await Promise.all(
+    Object.entries(detectors).map(async ([name, detect]) => {
       try {
-        const found = await agent.detect();
-        return found ? agent : null;
+        return (await detect()) ? name : null;
       } catch {
         return null;
       }
-    })
+    }),
   );
+  return results.filter((name): name is string => name !== null);
+}
 
-  for (const agent of detected.filter(Boolean) as AgentDetector[]) {
-    try {
-      await agent.inject(root, result);
-    } catch {
-      // Skip agents that fail to inject
+/** Works out which instruction files Pux would create or edit, without touching anything. */
+export async function planAgentInstructions(root: string, options: PlanOptions = {}): Promise<AgentPlan> {
+  const installed = new Set(await (options.detectInstalled ?? detectInstalledAgents)());
+  const entries: AgentPlanEntry[] = [];
+
+  for (const file of agentFiles) {
+    const absolute = join(root, file.path);
+    if (await exists(absolute)) {
+      let content = "";
+      try {
+        content = await readFile(absolute, "utf8");
+      } catch {
+        // Unreadable: treat as something we must not touch.
+        continue;
+      }
+      const hasPointer = content.includes(startMarker) && content.includes(endMarker);
+      entries.push({ agent: file.agent, path: file.path, action: hasPointer ? "present" : "append" });
+      continue;
+    }
+
+    if (file.appendOnly) continue;
+    const inUse = file.evidence ? await exists(join(root, file.evidence)) : false;
+    if (file.always || inUse || installed.has(file.agent)) {
+      entries.push({ agent: file.agent, path: file.path, action: "create" });
     }
   }
 
-  // Also inject into any existing instruction files we didn't already handle
-  await appendInstruction(join(root, "AGENTS.md"), "Codex", result);
-  await appendInstruction(join(root, "CLAUDE.md"), "Claude Code", result);
-  await appendInstruction(join(root, "GEMINI.md"), "Gemini CLI", result);
-  await appendInstruction(join(root, ".cursorrules"), "Cursor", result);
-  await appendInstruction(join(root, ".windsurfrules"), "Windsurf", result);
-  await appendInstruction(join(root, ".clinerules"), "Cline", result);
-  await appendInstruction(join(root, ".github", "copilot-instructions.md"), "GitHub Copilot", result);
+  return { entries };
+}
 
-  return result;
+async function ensureAiContextIgnored(root: string): Promise<void> {
+  const gitignore = join(root, ".gitignore");
+  let existing = "";
+  try {
+    existing = await readFile(gitignore, "utf8");
+  } catch {
+    // No .gitignore yet.
+  }
+  if (existing.split("\n").some((line) => line.trim() === aiContextIgnoreRule)) return;
+  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+  await appendFile(gitignore, `${prefix}${aiContextIgnoreRule}\n`, "utf8");
+}
+
+/** Carries out a plan from planAgentInstructions. Files that cannot be written are skipped. */
+export async function applyAgentInstructions(root: string, plan: AgentPlan): Promise<AgentInstructionResult> {
+  const added = new Set<string>();
+  const present = new Set<string>();
+
+  await ensureAiContextIgnored(root);
+
+  for (const entry of plan.entries) {
+    if (entry.action === "present") {
+      present.add(entry.agent);
+      continue;
+    }
+
+    const file = agentFiles.find((f) => f.path === entry.path);
+    if (!file) continue;
+    const absolute = join(root, entry.path);
+
+    try {
+      if (entry.action === "create") {
+        await mkdir(dirname(absolute), { recursive: true });
+        await writeFile(absolute, `${file.content.trimEnd()}\n`, { encoding: "utf8", flag: "wx" });
+      } else {
+        const existing = await readFile(absolute, "utf8");
+        if (existing.includes(startMarker) && existing.includes(endMarker)) {
+          present.add(entry.agent);
+          continue;
+        }
+        const separator = existing.trim().length > 0 ? "\n\n" : "";
+        await writeFile(absolute, `${existing.trimEnd()}${separator}${markdownInstruction}\n`, "utf8");
+      }
+      added.add(entry.agent);
+    } catch {
+      // Read-only, locked or raced: leave it alone.
+    }
+  }
+
+  return { added: [...added], present: [...present].filter((agent) => !added.has(agent)) };
+}
+
+/** Plans and applies in one go for the repository containing the current directory. */
+export async function ensureAgentInstructions(options: PlanOptions = {}): Promise<AgentInstructionResult> {
+  const root = await command("git", ["rev-parse", "--show-toplevel"]);
+  if (!root) return { added: [], present: [] };
+  const plan = await planAgentInstructions(root, options);
+  return applyAgentInstructions(root, plan);
 }

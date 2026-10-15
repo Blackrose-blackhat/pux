@@ -92,7 +92,7 @@ esac
 
     try {
       const { ensureAgentInstructions } = await import("../agents/instructions.js");
-      const result = await ensureAgentInstructions();
+      const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
       expect(result.added).toContain("Codex");
       const content = await readFile(join(tempDir, "AGENTS.md"), "utf8");
@@ -109,7 +109,7 @@ esac
 
     try {
       const { ensureAgentInstructions } = await import("../agents/instructions.js");
-      const result = await ensureAgentInstructions();
+      const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
       expect(result.present).toContain("Codex");
       expect(result.added).not.toContain("Codex");
@@ -126,7 +126,7 @@ esac
       await writeFile(join(tempDir, "CLAUDE.md"), "# My Project\n\nExisting instructions here.\n");
 
       const { ensureAgentInstructions } = await import("../agents/instructions.js");
-      const result = await ensureAgentInstructions();
+      const result = await ensureAgentInstructions({ detectInstalled: async () => [] });
 
       expect(result.added).toContain("Claude Code");
       const content = await readFile(join(tempDir, "CLAUDE.md"), "utf8");

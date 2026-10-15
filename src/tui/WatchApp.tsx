@@ -2,7 +2,13 @@ import { Box, Text, useApp, useInput } from "ink";
 import React, { useEffect, useRef, useState } from "react";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
+import {
+  applyAgentInstructions,
+  planAgentInstructions,
+  type AgentInstructionResult,
+  type AgentPlan,
+} from "../agents/instructions.js";
+import { loadConfig, setRepoDecision } from "../config/store.js";
 import { generateFailureContext } from "../context/generate.js";
 import { command } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
@@ -17,6 +23,11 @@ type InstallStatus = "prompting" | "installing" | "done" | "failed";
 type ProviderState = {
   provider: Provider;
   snapshot: ProviderSnapshot;
+};
+
+type PendingConsent = {
+  root: string;
+  plan: AgentPlan;
 };
 
 const agentIcons: Record<string, string> = {
@@ -51,6 +62,7 @@ export function WatchApp() {
   const [commit, setCommit] = useState<string | null>(null);
   const [contextStatus, setContextStatus] = useState<"idle" | "generating" | "written" | "error">("idle");
   const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
+  const [consent, setConsent] = useState<PendingConsent | null>(null);
   const [rerunStatus, setRerunStatus] = useState<"idle" | "rerunning" | "done" | "error">("idle");
   const generatedFor = useRef<string | null>(null);
   const providersRef = useRef<Provider[]>([]);
@@ -83,6 +95,23 @@ export function WatchApp() {
         void runInstall(missingDeps[installIndex].install);
       } else if (input === "n" || input === "N") {
         moveToNext();
+      }
+      return;
+    }
+
+    if (consent && repository) {
+      if (input === "y" || input === "Y") {
+        const { root, plan } = consent;
+        setConsent(null);
+        void setRepoDecision(repository, true)
+          .then(() => applyAgentInstructions(root, plan))
+          .then(setAgentInstructions)
+          .catch(() => setAgentInstructions(null));
+      } else if (input === "n" || input === "N") {
+        setConsent(null);
+        void setRepoDecision(repository, false).catch(() => undefined);
+      } else if (input === "q") {
+        exit();
       }
       return;
     }
@@ -204,10 +233,33 @@ export function WatchApp() {
     };
   }, [phase, repository]);
 
+  // Connect agent instruction files: silently when the user already agreed for this
+  // repository, otherwise show exactly what would be written and ask once.
   useEffect(() => {
-    if (phase !== "watching") return;
-    void ensureAgentInstructions().then(setAgentInstructions).catch(() => setAgentInstructions(null));
-  }, [phase]);
+    if (phase !== "watching" || !repository) return;
+    let active = true;
+
+    void (async () => {
+      const root = await command("git", ["rev-parse", "--show-toplevel"]);
+      if (!root) return;
+      const decision = (await loadConfig()).repos[repository]?.agentFiles;
+      if (decision === false) return;
+
+      const plan = await planAgentInstructions(root);
+      const pending = plan.entries.some((entry) => entry.action !== "present");
+      if (!active) return;
+
+      if (decision === true || !pending) {
+        setAgentInstructions(await applyAgentInstructions(root, plan));
+      } else {
+        setConsent({ root, plan });
+      }
+    })().catch(() => {
+      if (active) setAgentInstructions(null);
+    });
+
+    return () => { active = false; };
+  }, [phase, repository]);
 
   // Generate failure context once per failed pipeline, whichever provider it came from.
   useEffect(() => {
@@ -257,6 +309,8 @@ export function WatchApp() {
         </Box>
       </Box>
 
+      {consent && <ConsentView plan={consent.plan} />}
+
       {providerStates.map((state) => (
         <Box key={state.provider.name} flexDirection="column" marginTop={1}>
           <ProviderSection state={state} />
@@ -275,7 +329,32 @@ export function WatchApp() {
         <Box marginTop={1}><Text dimColor>  → Connected to {agentInstructions.added.map(formatAgent).join("  ")}</Text></Box>
       )}
 
-      <Box marginTop={1}><Text dimColor>  {hasFailure ? "press r to re-run · q to quit" : "press q to quit"}</Text></Box>
+      {!consent && (
+        <Box marginTop={1}><Text dimColor>  {hasFailure ? "press r to re-run · q to quit" : "press q to quit"}</Text></Box>
+      )}
+    </Box>
+  );
+}
+
+function ConsentView({ plan }: { plan: AgentPlan }) {
+  const pending = plan.entries.filter((entry) => entry.action !== "present");
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color="yellow">  Connect your AI agents to Pux failure context?</Text>
+      <Text dimColor>  This writes the following into this repository:</Text>
+      {pending.map((entry) => (
+        <Text key={entry.path}>
+          {"    "}
+          <Text color={entry.action === "create" ? "green" : "cyan"}>{entry.action === "create" ? "+" : "~"}</Text>
+          {" "}{entry.path}
+          <Text dimColor> · {entry.action === "create" ? "create" : "append"} for {entry.agent}</Text>
+        </Text>
+      ))}
+      <Text>
+        {"    "}<Text color="green">+</Text> .gitignore<Text dimColor> · add .ai-context/</Text>
+      </Text>
+      <Text> </Text>
+      <Text>  Press <Text color="green" bold>y</Text> to connect · <Text color="red" bold>n</Text> to skip <Text dimColor>(remembered for this repository)</Text></Text>
     </Box>
   );
 }
