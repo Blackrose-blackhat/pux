@@ -7,6 +7,7 @@ import { generateFailureContext } from "../context/generate.js";
 import { command } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
+import { pollIntervalFor } from "./polling.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -153,8 +154,8 @@ export function WatchApp() {
     }
   }
 
-  // Adaptive polling: checks HEAD each tick to detect pushes
-  // 3s when builds active or commit changed, 10s when idle
+  // Adaptive polling: checks HEAD each tick to detect pushes.
+  // Fast while anything is queued or building, slow once everything has settled.
   const isPolling = useRef(false);
   const commitRef = useRef(commit);
   commitRef.current = commit;
@@ -163,9 +164,13 @@ export function WatchApp() {
     if (phase !== "watching" || !repository) return;
     let active = true;
 
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const tick = async () => {
+      if (!active) return;
       if (isPolling.current) return;
       isPolling.current = true;
+      let interval = pollIntervalFor([]);
       try {
         // Check if HEAD changed (user pushed)
         const currentHead = await command("git", ["rev-parse", "HEAD"]);
@@ -184,20 +189,19 @@ export function WatchApp() {
           })
         );
         if (active) setProviderStates(states);
+        interval = pollIntervalFor(states.map((s) => s.snapshot));
       } finally {
         isPolling.current = false;
+        if (active) timer = setTimeout(() => void tick(), interval);
       }
     };
 
     void tick();
 
-    const timer = setInterval(() => {
-      if (!active) return;
-      // Adaptive: 3s if builds are active, 10s otherwise
-      void tick();
-    }, 3000);
-
-    return () => { active = false; clearInterval(timer); };
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
   }, [phase, repository]);
 
   useEffect(() => {

@@ -57,3 +57,62 @@ esac`);
     expect(await githubProvider.getLogs(pipeline)).toBe("full log output");
   });
 });
+
+describe("githubProvider.poll caching", () => {
+  const run = (status: string, conclusion: string | null) =>
+    `[{"databaseId":9,"status":"${status}","conclusion":${conclusion ? `"${conclusion}"` : "null"},"name":"CI","workflowName":"CI","headSha":"abc","createdAt":"2026-07-18T10:00:00Z"}]`;
+
+  async function countingGh(runJson: string): Promise<string> {
+    const log = `${repo.root}/gh-calls.log`;
+    await repo.fakeBin("gh", `echo "$*" >> "${log}"
+case "$*" in
+  "run list --commit"*) echo '${runJson}' ;;
+  "run view 9 --json jobs") echo '{"jobs":[{"databaseId":1,"name":"test","status":"completed","conclusion":"success","steps":[]}]}' ;;
+  "api repos/u/r/actions/runs/9 --jq .actor.login") echo octocat ;;
+  *) exit 1 ;;
+esac`);
+    return log;
+  }
+
+  async function calls(log: string): Promise<string[]> {
+    const { readFile } = await import("node:fs/promises");
+    return (await readFile(log, "utf8")).trim().split("\n");
+  }
+
+  it("fetches the actor only once per run", async () => {
+    const { clearGitHubRunCache } = await import("./github.js");
+    clearGitHubRunCache();
+    const log = await countingGh(run("in_progress", null));
+
+    await githubProvider.poll("u/r", "abc");
+    await githubProvider.poll("u/r", "abc");
+
+    const actorCalls = (await calls(log)).filter((c) => c.startsWith("api repos"));
+    expect(actorCalls).toHaveLength(1);
+  });
+
+  it("stops fetching jobs once the run has completed", async () => {
+    const { clearGitHubRunCache } = await import("./github.js");
+    clearGitHubRunCache();
+    const log = await countingGh(run("completed", "success"));
+
+    const first = await githubProvider.poll("u/r", "abc");
+    const second = await githubProvider.poll("u/r", "abc");
+
+    const jobCalls = (await calls(log)).filter((c) => c.startsWith("run view 9 --json jobs"));
+    expect(jobCalls).toHaveLength(1);
+    expect(second).toEqual(first);
+  });
+
+  it("keeps fetching jobs while the run is in progress", async () => {
+    const { clearGitHubRunCache } = await import("./github.js");
+    clearGitHubRunCache();
+    const log = await countingGh(run("in_progress", null));
+
+    await githubProvider.poll("u/r", "abc");
+    await githubProvider.poll("u/r", "abc");
+
+    const jobCalls = (await calls(log)).filter((c) => c.startsWith("run view 9 --json jobs"));
+    expect(jobCalls).toHaveLength(2);
+  });
+});
