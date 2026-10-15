@@ -167,7 +167,7 @@ esac
 
       const content = await readFile(join(tempDir, ".ai-context", "failure.md"), "utf8");
       expect(content).toContain("# CI Failure");
-      expect(content).toContain("Workflow: CI");
+      expect(content).toContain("Pipeline: CI");
       expect(content).toContain(commit);
       expect(content).toContain("FAIL src/math.test.ts");
       expect(content).toContain("AssertionError: expected 4 to be 5");

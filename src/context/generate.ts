@@ -1,8 +1,16 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { command, type WatchSnapshot } from "../github/client.js";
+import {
+  detectReproCommand,
+  extractErrorWindow,
+  findOverlap,
+  parseExitCode,
+  parseFailedLog,
+  renderReport,
+  type ReportStep,
+} from "./report.js";
 
-const maxLogLines = 30;
 const aiContextIgnoreRule = ".ai-context/";
 
 async function optionalFile(path: string): Promise<string | null> {
@@ -11,34 +19,6 @@ async function optionalFile(path: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-function fenced(value: string): string {
-  return value.replaceAll("```", "``\\`");
-}
-
-function extractError(log: string): string {
-  const lines = log.split("\n");
-  const signal = /\b(error|exception|failed|failure|exit code|fatal|panic|ELIFECYCLE)\b/i;
-  const hit = lines.findIndex((line) => signal.test(line));
-  const start = hit >= 0 ? Math.max(0, hit - 12) : Math.max(0, lines.length - maxLogLines);
-  return lines.slice(start, start + maxLogLines).join("\n");
-}
-
-function detectReproCommand(log: string, workflow: string): string {
-  if (/\bnpm test\b|jest|vitest|mocha/i.test(log)) return "npm test";
-  if (/\btsc\b|type.?check/i.test(log)) return "npx tsc --noEmit";
-  if (/\beslint\b|lint/i.test(log)) return "npm run lint";
-  if (/\bnpm run build\b|webpack|vite build|tsup/i.test(log)) return "npm run build";
-  if (/deploy/i.test(workflow)) return "# deployment failure — check CI config";
-  return "# could not detect — check workflow step";
-}
-
-function findOverlap(errorText: string, changedFiles: string[]): string[] {
-  return changedFiles.filter((file) => {
-    const name = file.split("/").pop() ?? file;
-    return errorText.includes(file) || errorText.includes(name);
-  });
 }
 
 function folderName(iso: string, runId: number): string {
@@ -71,45 +51,39 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
     : [null, null];
 
   const label = snapshot.run.workflowName ?? snapshot.run.name;
-  const errorSignal = extractError(failedLog);
+  const logSteps = parseFailedLog(failedLog);
+  const steps: ReportStep[] = logSteps.map((step) => ({
+    job: step.job,
+    step: step.step,
+    error: extractErrorWindow(step.lines),
+  }));
+  const allLines = logSteps.flatMap((step) => step.lines);
+  const errorText = steps.map((step) => step.error).join("\n");
   const changedFiles = changedFilesRaw?.trim().split("\n").filter(Boolean) ?? [];
-  const overlapping = findOverlap(errorSignal, changedFiles);
-  const reproCommand = detectReproCommand(failedLog, label);
+  const overlapping = findOverlap(errorText, changedFiles);
+  const reproCommand = detectReproCommand(allLines.join("\n"), label, "github-actions");
 
   const relevantDiff = overlapping.length > 0 && diff
     ? await command("git", ["diff", "--no-ext-diff", "HEAD^", "HEAD", "--", ...overlapping])
     : diff;
 
-  const md = [
-    "# CI Failure",
-    "",
-    `- Workflow: ${label}`,
-    `- Commit: ${snapshot.commit}`,
-    `- Exit code: 1`,
-    `- Reproduce: \`${reproCommand}\``,
-    "",
-    "## Error",
-    "```",
-    fenced(errorSignal),
-    "```",
-    "",
-    "## Likely cause",
-    overlapping.length > 0
-      ? `Changed files referenced in the error:\n${overlapping.map((f) => `- ${f}`).join("\n")}`
-      : "No direct overlap between changed files and error output.",
-    "",
-    `## Diff${overlapping.length > 0 ? " (relevant files only)" : ""}`,
-    "```diff",
-    fenced(relevantDiff?.trim() || "No diff available."),
-    "```",
-  ].join("\n");
+  const md = renderReport({
+    provider: "github-actions",
+    pipelineName: label,
+    commit: snapshot.commit,
+    exitCode: parseExitCode(allLines),
+    reproCommand,
+    steps,
+    overlapping,
+    diffRange: hasParent ? "HEAD^..HEAD" : null,
+    diff: relevantDiff,
+  });
 
   const folder = folderName(snapshot.run.createdAt, snapshot.run.databaseId);
   const directory = join(root, ".ai-context");
   const failureDir = join(directory, "failures", folder);
 
   await ensureAiContextIgnored(root);
-  await mkdir(directory, { recursive: true });
   await mkdir(failureDir, { recursive: true });
 
   await writeFile(
@@ -126,7 +100,6 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
     "utf8",
   );
 
-  const latest = join(directory, "failure.md");
-  await writeFile(latest, `${md}\n`, "utf8");
+  await writeFile(join(directory, "failure.md"), `${md}\n`, "utf8");
   return failureDir;
 }
