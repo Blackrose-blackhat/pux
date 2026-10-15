@@ -5,6 +5,7 @@ import { render } from "ink";
 import React from "react";
 import { WatchApp } from "./tui/WatchApp.js";
 import { runDoctor } from "./commands/doctor.js";
+import { runFixCommand } from "./commands/fix.js";
 import { getCurrentVersion, getUpdateNotice } from "./utils/version-check.js";
 
 const program = new Command();
@@ -25,6 +26,16 @@ program
       // Leave alternate screen buffer — restores original terminal content
       process.stdout.write("\x1B[?1049l");
     });
+  });
+
+program
+  .command("fix")
+  .description("Ask your installed coding agent to fix the latest captured failure on a new branch.")
+  .option("--agent <id>", "agent to use: claude, codex or cursor-agent (default: first found on PATH)")
+  .option("--push", "push the fix branch to origin when the agent changed something")
+  .option("--dry-run", "show the agent and prompt that would be used without running anything")
+  .action(async (options: { agent?: string; push?: boolean; dryRun?: boolean }) => {
+    await runFixCommand(options);
   });
 
 program

@@ -83,6 +83,16 @@ Two phases. `planAgentInstructions` returns exactly which instruction files woul
 
 The TUI shows the plan and asks once per repository. The answer is stored by `config/store.ts`.
 
+### `src/agents/fix.ts`
+
+The `pux fix` engine. A small catalog lists the supported agent CLIs (`claude`, `codex`, `cursor-agent`) with the arguments that run each one non-interactively, prompt last. `detectAgents` checks PATH (injectable for tests), `selectAgent` applies `--agent` or the catalog order, `buildFixPrompt` writes the instructions that point the agent at `.ai-context/failure.md`, and `readLatestFailure` finds the newest bundle's commit and pipeline id.
+
+`runFix` creates `pux/fix-<pipeline id>` from the run's commit as a temporary git worktree under `.ai-context/fix/`, spawns the agent there, commits whatever changed (excluding `.ai-context/`), and removes the worktree. The user's checkout is never touched, which also keeps the running TUI from reacting to a HEAD change. No changes means the branch is deleted too. `--push` is the only way anything leaves the machine; Pux never opens a pull request. The agent's explanation is read from `<pux-explanation>` markers in its stdout and becomes the commit body.
+
+### `src/commands/fix.ts`
+
+Stdout reporting for `pux fix` (`--agent`, `--push`, `--dry-run`) and the one-line result summary the TUI reuses.
+
 ### `src/config/store.ts`
 
 A small JSON file at `$PUX_CONFIG_DIR`, `$XDG_CONFIG_HOME/pux`, or `~/.config/pux`. It holds per-repository consent and the update-check cache.
@@ -93,7 +103,7 @@ Looks up the latest published version at most once a day, in the background, and
 
 ### `src/tui/WatchApp.tsx`
 
-Ink terminal UI. Detects providers, polls them with `pollIntervalFor` (3s while anything is queued or building, 10s once settled), renders pipelines grouped by provider, and triggers `generateFailureContext` once per failed pipeline. Also hosts the install prompts for missing CLIs, the consent prompt, and the `r` re-run key.
+Ink terminal UI. Detects providers, polls them with `pollIntervalFor` (3s while anything is queued or building, 10s once settled), renders pipelines grouped by provider, and triggers `generateFailureContext` once per failed pipeline. Also hosts the install prompts for missing CLIs, the consent prompt, the `r` re-run key, and the `f` key that runs `runFix` once a failure context has been written.
 
 ### `src/tui/Pet.tsx`
 
@@ -117,6 +127,10 @@ Checks for `git`, `gh`, and optionally `vercel` in PATH.
    a. provider.getLogs(pipeline)
    b. collectDiff() from the branch base at pipeline.commitSha
    c. renderReport() → .ai-context/failure.md + failures/<stamp>-<id>/metadata.json
+7. On `f` (or `pux fix`): readLatestFailure() → detectAgents() → runFix()
+   a. git worktree add -b pux/fix-<id> .ai-context/fix/… <commit>
+   b. spawn the agent CLI in that worktree with buildFixPrompt()
+   c. commit the agent's changes, remove the worktree, report branch + files + explanation
 ```
 
 ---
@@ -128,12 +142,14 @@ pux/
 ├── src/
 │   ├── cli.tsx                  # CLI entry point (Commander)
 │   ├── commands/doctor.ts       # Environment health checks
+│   ├── commands/fix.ts          # `pux fix` output
 │   ├── providers/               # GitHub Actions, Vercel, detection
 │   ├── context/
 │   │   ├── report.ts            # Pure log → report logic
 │   │   ├── diff.ts              # Branch-base diff resolution
 │   │   └── generate.ts          # Writes the failure bundle
 │   ├── agents/instructions.ts   # Plan/apply agent instruction pointers
+│   ├── agents/fix.ts            # Detect agents, run them on a fix branch
 │   ├── config/store.ts          # ~/.config/pux/config.json
 │   ├── utils/version-check.ts   # Background update notice
 │   ├── tui/                     # Ink UI, polling interval, cat
