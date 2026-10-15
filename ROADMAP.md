@@ -36,7 +36,7 @@ Pux shows what's happening right now.
 Only on failure. Only what matters.
 
 - [x] Download failed step logs via `gh run view --log-failed`
-- [ ] Fallback to full log download if `--log-failed` is empty
+- [x] Fallback to full log download if `--log-failed` is empty
 - [ ] Cache logs locally to avoid re-downloading
 
 ---
@@ -45,9 +45,9 @@ Only on failure. Only what matters.
 
 Turn 8000 log lines into 20.
 
-- [x] Regex-based signal detection (error, exception, fatal, exit code)
+- [x] Scored signal detection (explicit error markers outrank bare keywords; cache warnings ignored)
 - [x] Extract relevant window around first error
-- [ ] Multi-error extraction (when multiple steps fail)
+- [x] Multi-error extraction (one section per failed step)
 - [ ] Parse structured test output (JUnit XML, TAP)
 
 ---
@@ -57,9 +57,9 @@ Turn 8000 log lines into 20.
 The core product.
 
 - [x] Write `.ai-context/failure.md` with structured sections
-- [x] Include: workflow name, job, step, logs, diff, changed files
-- [x] Include: package.json, Dockerfile, workflow YAML
-- [ ] Only include config files if they changed or are relevant to the error
+- [x] Include: provider, pipeline, job, step, exit code, error window, diff
+- [x] Diff from the branch base at the run's commit, trimmed to files the error mentions
+- [x] Reproduce command heuristic
 - [ ] Parse error log for file paths → include referenced source files
 - [ ] Respect token budget (truncate intelligently for LLM context windows)
 
@@ -70,9 +70,10 @@ The core product.
 Make every AI tool aware of the failure.
 
 - [x] Auto-inject instruction pointer into agent files
-- [x] Support: Codex, Claude Code, Gemini, Cursor, Windsurf, Cline, Copilot
+- [x] Support: Codex, Claude Code, Gemini, Cursor, Windsurf, Cline, Copilot, Aider, Amazon Q
 - [x] Idempotent injection (no duplicates)
 - [x] Graceful handling of read-only files
+- [x] Ask once per repository before writing, remember the answer
 - [ ] Remove stale context when the failure is resolved (next successful run)
 
 ---
@@ -120,7 +121,8 @@ Not building yet. Sequenced by value.
 - [ ] CircleCI support
 - [ ] Buildkite support
 - [ ] Jenkins support
-- [ ] Vercel / Railway / Render deploy failures
+- [x] Vercel deploy failures
+- [ ] Railway / Render deploy failures
 - [ ] "Explain" button → local LLM summarization
 - [ ] "Fix" button → auto-apply suggested fix
 - [ ] Multiple repo support

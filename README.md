@@ -73,18 +73,15 @@ Context Generator (assembles AI-ready failure report)
 UI (menu bar notification + popover)
 ```
 
-When a workflow fails, Pux writes a stable latest-entry file plus a timestamped artifact bundle containing:
+When a pipeline fails, Pux writes `.ai-context/failure.md` (always the latest failure) plus a timestamped bundle under `.ai-context/failures/` containing:
 
-- Failed job, step, and exit code
-- Relevant stacktrace (not 8000 lines — just the signal)
-- Git diff of the commit that triggered the failure
-- Changed file list
-- Workflow YAML
-- Package manifest and config files (only if relevant)
-- Raw failed-step logs and trimmed log excerpts
-- Metadata that points back to the exact captured run
+- Provider, pipeline, commit, and the exit code when the log states one
+- One error section per failed step, centred on the strongest error signal (not 8000 lines — just the signal)
+- The diff that led to the failure, measured from the branch base, trimmed to the files the error mentions
+- A suggested reproduce command
+- `metadata.json` pointing back to the exact run
 
-This context is designed to be dropped directly into any AI coding agent.
+The report works for GitHub Actions runs and Vercel deployments. It is designed to be dropped directly into any AI coding agent.
 
 ---
 
@@ -121,7 +118,14 @@ npm run build
 npm link
 ```
 
-**Requirements:** Node.js 22+, [GitHub CLI](https://cli.github.com/) (`gh`) authenticated, macOS.
+Or with Homebrew:
+
+```sh
+brew tap Blackrose-blackhat/pux https://github.com/Blackrose-blackhat/pux
+brew install pux
+```
+
+**Requirements:** Node.js 22+ and the [GitHub CLI](https://cli.github.com/) (`gh`) authenticated. The CLI runs on macOS, Linux, and Windows; the menu bar app will be macOS first. [Vercel CLI](https://vercel.com/docs/cli) is optional and enables deployment watching.
 
 > The menu bar app is coming. For now, the engine runs as a CLI.
 
@@ -148,43 +152,53 @@ Live terminal dashboard. Watches the GitHub Actions run for your current commit.
  ◌ deploy · 3/5 steps
    ↳ Run deployment script
 
- Refreshes every 3s · press q to quit
+ press r to re-run · q to quit
 ```
 
-On failure, automatically refreshes `.ai-context/failure.md` for the latest run, stores the full capture under `.ai-context/failures/YYYY/MM/DD/...`, and connects that context to your AI agents (Claude Code, Codex, Cursor, Copilot, etc).
+Polls every 3 seconds while something is queued or building and every 10 seconds once everything has settled. On failure it writes `.ai-context/failure.md`, stores the full capture under `.ai-context/failures/<timestamp>-<run>/`, and connects that context to your AI agents (Claude Code, Codex, Cursor, Copilot, etc). Press `r` to re-run the failed GitHub Actions workflow.
 
 ### `pux doctor`
 
-Checks that required tools are installed.
+Checks that required tools are installed and mentions a newer Pux version when one exists.
 
 ```
 ✓ Git
 ✓ GitHub CLI
+○ Vercel CLI (optional)
 ```
 
 ---
 
 ## Agent Integrations
 
-When a failure is detected, Pux injects a context pointer into whichever agent instruction files exist in your repo:
+Pux can add a short pointer to your agent instruction files so every coding agent reads `.ai-context/failure.md` before diagnosing a CI failure. The first time you run `pux watch` in a repository it lists exactly which files it would create or append and asks for a yes or no. The answer is remembered per repository.
 
 | Agent | File |
 |-------|------|
-| OpenAI Codex | `AGENTS.md` |
+| OpenAI Codex | `AGENTS.md` (always offered) |
 | Claude Code | `CLAUDE.md` |
 | Gemini CLI | `GEMINI.md` |
 | GitHub Copilot | `.github/copilot-instructions.md` |
-| Cursor | `.cursorrules` / `.cursor/rules/` |
+| Cursor | `.cursor/rules/pux-ci-context.mdc`, plus `.cursorrules` if present |
 | Windsurf | `.windsurfrules` |
 | Cline | `.clinerules` |
+| Aider | `.aider/conventions.md` |
+| Amazon Q | `.amazonq/rules/pux-ci-context.md` |
 
-The instruction tells the agent to read `.ai-context/failure.md` before diagnosing CI failures. That file acts as a stable pointer to the newest failure bundle under `.ai-context/failures/`.
+Existing files are appended to, never rewritten. New files are only created for agents that are installed on your machine or already in use in the repository. The pointer is wrapped in HTML comment markers so it is added once.
+
+### What Pux writes to your repository
+
+- `.ai-context/` holds the failure reports. Pux adds it to `.gitignore` so the artifacts never end up in version control.
+- The agent instruction files above, only after you say yes.
+
+Nothing else. Your answer, and the once-a-day update check, live in `~/.config/pux/config.json` (or `$XDG_CONFIG_HOME/pux/`). Delete a repository's entry there to be asked again.
 
 ---
 
 ## Scope
 
-**MVP:** GitHub Actions only. macOS only. Menu bar only.
+**MVP:** GitHub Actions and Vercel. CLI on any platform; menu bar app macOS first.
 
 **Not building:** Authentication, accounts, SaaS, cloud sync, team features, dashboards, pricing, landing pages, AI agents.
 
