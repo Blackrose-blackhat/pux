@@ -2,11 +2,21 @@ import { Box, Text, useApp, useInput } from "ink";
 import React, { useEffect, useRef, useState } from "react";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
+import {
+  applyAgentInstructions,
+  planAgentInstructions,
+  type AgentInstructionResult,
+  type AgentPlan,
+} from "../agents/instructions.js";
+import { detectAgents, readLatestFailure, runFix, selectAgent, type FixProgress, type FixResult } from "../agents/fix.js";
+import { describeFixResult } from "../commands/fix.js";
+import { loadConfig, setRepoDecision } from "../config/store.js";
 import { generateFailureContext } from "../context/generate.js";
-import { command, getWatchSnapshot, type WatchSnapshot } from "../github/client.js";
+import { command } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
+import { pollIntervalFor } from "./polling.js";
+import { getUpdateNotice } from "../utils/version-check.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +27,17 @@ type ProviderState = {
   provider: Provider;
   snapshot: ProviderSnapshot;
 };
+
+type PendingConsent = {
+  root: string;
+  plan: AgentPlan;
+};
+
+type FixState =
+  | { kind: "idle" }
+  | { kind: "running"; agent: string | null; stage: FixProgress["stage"] | "starting" }
+  | { kind: "done"; result: FixResult }
+  | { kind: "error"; message: string };
 
 const agentIcons: Record<string, string> = {
   "Claude Code": "✦",
@@ -50,10 +71,19 @@ export function WatchApp() {
   const [commit, setCommit] = useState<string | null>(null);
   const [contextStatus, setContextStatus] = useState<"idle" | "generating" | "written" | "error">("idle");
   const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
-  const [legacySnapshot, setLegacySnapshot] = useState<WatchSnapshot>({ kind: "checking" });
+  const [consent, setConsent] = useState<PendingConsent | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [rerunStatus, setRerunStatus] = useState<"idle" | "rerunning" | "done" | "error">("idle");
+  const [fixState, setFixState] = useState<FixState>({ kind: "idle" });
   const generatedFor = useRef<string | null>(null);
   const providersRef = useRef<Provider[]>([]);
+
+  // Background update check: never blocks, never prompts.
+  useEffect(() => {
+    let active = true;
+    void getUpdateNotice().then((line) => { if (active) setUpdateNotice(line); });
+    return () => { active = false; };
+  }, []);
 
   // Initial detection
   useEffect(() => {
@@ -87,6 +117,28 @@ export function WatchApp() {
       return;
     }
 
+    if (consent && repository) {
+      if (input === "y" || input === "Y") {
+        const { root, plan } = consent;
+        setConsent(null);
+        void setRepoDecision(repository, true)
+          .then(() => applyAgentInstructions(root, plan))
+          .then(setAgentInstructions)
+          .catch(() => setAgentInstructions(null));
+      } else if (input === "n" || input === "N") {
+        setConsent(null);
+        void setRepoDecision(repository, false).catch(() => undefined);
+      } else if (input === "q") {
+        exit();
+      }
+      return;
+    }
+
+    if (input === "f" && contextStatus === "written" && fixState.kind !== "running") {
+      void startFix();
+      return;
+    }
+
     if (input === "r" && rerunStatus !== "rerunning") {
       const failedState = providerStates.find((s) =>
         s.snapshot.kind === "active" && s.snapshot.pipelines.some((p) => p.status === "failed")
@@ -105,6 +157,27 @@ export function WatchApp() {
 
     if (input === "q") exit();
   });
+
+  // `f`: hand the captured failure to the user's own coding agent on a new branch.
+  async function startFix() {
+    setFixState({ kind: "running", agent: null, stage: "starting" });
+    try {
+      const root = await command("git", ["rev-parse", "--show-toplevel"]);
+      if (!root) throw new Error("Not inside a Git repository.");
+      const failure = await readLatestFailure(root);
+      if (!failure) throw new Error("No captured failure in .ai-context/ yet.");
+      const agent = selectAgent(await detectAgents());
+      const result = await runFix({
+        root,
+        failure,
+        agent,
+        onProgress: (progress) => setFixState({ kind: "running", agent: agent.label, stage: progress.stage }),
+      });
+      setFixState({ kind: "done", result });
+    } catch (error) {
+      setFixState({ kind: "error", message: (error as Error).message.split("\n")[0] });
+    }
+  }
 
   function moveToNext() {
     const next = installIndex + 1;
@@ -154,8 +227,8 @@ export function WatchApp() {
     }
   }
 
-  // Adaptive polling: checks HEAD each tick to detect pushes
-  // 3s when builds active or commit changed, 10s when idle
+  // Adaptive polling: checks HEAD each tick to detect pushes.
+  // Fast while anything is queued or building, slow once everything has settled.
   const isPolling = useRef(false);
   const commitRef = useRef(commit);
   commitRef.current = commit;
@@ -164,9 +237,13 @@ export function WatchApp() {
     if (phase !== "watching" || !repository) return;
     let active = true;
 
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const tick = async () => {
+      if (!active) return;
       if (isPolling.current) return;
       isPolling.current = true;
+      let interval = pollIntervalFor([]);
       try {
         // Check if HEAD changed (user pushed)
         const currentHead = await command("git", ["rev-parse", "HEAD"]);
@@ -185,40 +262,66 @@ export function WatchApp() {
           })
         );
         if (active) setProviderStates(states);
-
-        const legacy = await getWatchSnapshot();
-        if (active) setLegacySnapshot(legacy);
+        interval = pollIntervalFor(states.map((s) => s.snapshot));
       } finally {
         isPolling.current = false;
+        if (active) timer = setTimeout(() => void tick(), interval);
       }
     };
 
     void tick();
 
-    const timer = setInterval(() => {
-      if (!active) return;
-      // Adaptive: 3s if builds are active, 10s otherwise
-      void tick();
-    }, 3000);
-
-    return () => { active = false; clearInterval(timer); };
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
   }, [phase, repository]);
 
+  // Connect agent instruction files: silently when the user already agreed for this
+  // repository, otherwise show exactly what would be written and ask once.
   useEffect(() => {
-    if (phase !== "watching") return;
-    void ensureAgentInstructions().then(setAgentInstructions).catch(() => setAgentInstructions(null));
-  }, [phase]);
+    if (phase !== "watching" || !repository) return;
+    let active = true;
 
+    void (async () => {
+      const root = await command("git", ["rev-parse", "--show-toplevel"]);
+      if (!root) return;
+      const decision = (await loadConfig()).repos[repository]?.agentFiles;
+      if (decision === false) return;
+
+      const plan = await planAgentInstructions(root);
+      const pending = plan.entries.some((entry) => entry.action !== "present");
+      if (!active) return;
+
+      if (decision === true || !pending) {
+        setAgentInstructions(await applyAgentInstructions(root, plan));
+      } else {
+        setConsent({ root, plan });
+      }
+    })().catch(() => {
+      if (active) setAgentInstructions(null);
+    });
+
+    return () => { active = false; };
+  }, [phase, repository]);
+
+  // Generate failure context once per failed pipeline, whichever provider it came from.
   useEffect(() => {
-    if (legacySnapshot.kind !== "run" || legacySnapshot.run.status !== "completed" || legacySnapshot.run.conclusion !== "failure") return;
-    if (generatedFor.current === String(legacySnapshot.run.databaseId)) return;
+    for (const state of providerStates) {
+      if (state.snapshot.kind !== "active") continue;
+      const failed = state.snapshot.pipelines.find((p) => p.status === "failed");
+      if (!failed) continue;
+      const key = `${failed.provider}:${failed.id}`;
+      if (generatedFor.current === key) return;
 
-    generatedFor.current = String(legacySnapshot.run.databaseId);
-    setContextStatus("generating");
-    void generateFailureContext(legacySnapshot)
-      .then(() => setContextStatus("written"))
-      .catch(() => setContextStatus("error"));
-  }, [legacySnapshot]);
+      generatedFor.current = key;
+      setContextStatus("generating");
+      void generateFailureContext({ provider: state.provider, pipeline: failed, repository })
+        .then(() => setContextStatus("written"))
+        .catch(() => setContextStatus("error"));
+      return;
+    }
+  }, [providerStates, repository]);
 
   // --- RENDER ---
 
@@ -250,6 +353,8 @@ export function WatchApp() {
         </Box>
       </Box>
 
+      {consent && <ConsentView plan={consent.plan} />}
+
       {providerStates.map((state) => (
         <Box key={state.provider.name} flexDirection="column" marginTop={1}>
           <ProviderSection state={state} />
@@ -264,11 +369,76 @@ export function WatchApp() {
       {rerunStatus === "done" && <Box marginTop={1}><Text color="green">  √ Re-run triggered</Text></Box>}
       {rerunStatus === "error" && <Box marginTop={1}><Text color="red">  ✗ Re-run failed</Text></Box>}
 
+      <FixStatus state={fixState} />
+
       {agentInstructions && agentInstructions.added.length > 0 && (
         <Box marginTop={1}><Text dimColor>  → Connected to {agentInstructions.added.map(formatAgent).join("  ")}</Text></Box>
       )}
 
-      <Box marginTop={1}><Text dimColor>  {hasFailure ? "press r to re-run · q to quit" : "press q to quit"}</Text></Box>
+      {!consent && (
+        <Box marginTop={1}><Text dimColor>  {hasFailure ? `press ${contextStatus === "written" && fixState.kind !== "running" ? "f to fix · " : ""}r to re-run · q to quit` : "press q to quit"}</Text></Box>
+      )}
+      {updateNotice && <Text dimColor>  {updateNotice}</Text>}
+    </Box>
+  );
+}
+
+function FixStatus({ state }: { state: FixState }) {
+  if (state.kind === "idle") return null;
+
+  if (state.kind === "running") {
+    const label = state.agent ?? "agent";
+    const line = state.stage === "branch" ? "Creating fix branch…"
+      : state.stage === "agent" ? `Running ${label}… this can take a few minutes`
+      : state.stage === "commit" ? "Committing changes…"
+      : state.stage === "push" ? "Pushing branch…"
+      : "Looking for a coding agent…";
+    return <Box marginTop={1}><Text color="yellow">  ◌ {line}</Text></Box>;
+  }
+
+  if (state.kind === "error") {
+    return <Box marginTop={1}><Text color="red">  ✗ Fix failed · {state.message}</Text></Box>;
+  }
+
+  const { result } = state;
+  if (result.kind === "no-changes") {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text color="yellow">  ○ {describeFixResult(result)}</Text>
+        {result.explanation && <Text dimColor>    {result.explanation}</Text>}
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color="green">  √ {describeFixResult(result)}</Text>
+      {result.files.map((file) => <Text key={file} dimColor>    ~ {file}</Text>)}
+      {result.explanation && <Box marginTop={1} marginLeft={4}><Text>{result.explanation}</Text></Box>}
+      <Text dimColor>    git diff {result.commit.slice(0, 7)}^..{result.branch}</Text>
+    </Box>
+  );
+}
+
+function ConsentView({ plan }: { plan: AgentPlan }) {
+  const pending = plan.entries.filter((entry) => entry.action !== "present");
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text color="yellow">  Connect your AI agents to Pux failure context?</Text>
+      <Text dimColor>  This writes the following into this repository:</Text>
+      {pending.map((entry) => (
+        <Text key={entry.path}>
+          {"    "}
+          <Text color={entry.action === "create" ? "green" : "cyan"}>{entry.action === "create" ? "+" : "~"}</Text>
+          {" "}{entry.path}
+          <Text dimColor> · {entry.action === "create" ? "create" : "append"} for {entry.agent}</Text>
+        </Text>
+      ))}
+      <Text>
+        {"    "}<Text color="green">+</Text> .gitignore<Text dimColor> · add .ai-context/</Text>
+      </Text>
+      <Text> </Text>
+      <Text>  Press <Text color="green" bold>y</Text> to connect · <Text color="red" bold>n</Text> to skip <Text dimColor>(remembered for this repository)</Text></Text>
     </Box>
   );
 }

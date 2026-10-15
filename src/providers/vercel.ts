@@ -17,6 +17,7 @@ type VercelDeployment = {
   name: string;
   state: string;
   target: string | null;
+  created?: number;
   creator?: { username: string };
   meta?: { githubCommitSha?: string };
 };
@@ -24,6 +25,20 @@ type VercelDeployment = {
 type VercelListResponse = {
   deployments?: VercelDeployment[];
 };
+
+function toPipeline(d: VercelDeployment): Pipeline {
+  return {
+    provider: "vercel",
+    id: d.url,
+    name: d.name,
+    status: mapStatus(d.state),
+    actor: d.creator?.username || null,
+    url: `https://${d.url}`,
+    commit: d.meta?.githubCommitSha?.slice(0, 7) || null,
+    commitSha: d.meta?.githubCommitSha || null,
+    startedAt: typeof d.created === "number" ? new Date(d.created).toISOString() : null,
+  };
+}
 
 function mapStatus(state: string): Pipeline["status"] {
   switch (state.toUpperCase()) {
@@ -75,31 +90,10 @@ export const vercelProvider: Provider = {
 
       if (!fallback.deployments || fallback.deployments.length === 0) return { kind: "waiting" };
 
-      return {
-        kind: "active",
-        pipelines: fallback.deployments.map((d) => ({
-          provider: "vercel" as const,
-          id: d.url,
-          name: d.name,
-          status: mapStatus(d.state),
-          actor: d.creator?.username || null,
-          url: `https://${d.url}`,
-          commit: d.meta?.githubCommitSha?.slice(0, 7) || null,
-        })),
-      };
+      return { kind: "active", pipelines: fallback.deployments.map(toPipeline) };
     }
 
-    const pipelines: Pipeline[] = deployments.map((d) => ({
-      provider: "vercel" as const,
-      id: d.url,
-      name: d.name,
-      status: mapStatus(d.state),
-      actor: d.creator?.username || null,
-      url: `https://${d.url}`,
-      commit: d.meta?.githubCommitSha?.slice(0, 7) || null,
-    }));
-
-    return { kind: "active", pipelines };
+    return { kind: "active", pipelines: deployments.map(toPipeline) };
   },
 
   async getLogs(pipeline: Pipeline): Promise<string | null> {

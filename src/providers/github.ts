@@ -44,6 +44,49 @@ function mapStatus(run: GitHubRunRaw): Pipeline["status"] {
   return "completed";
 }
 
+type RunCache = {
+  actor?: string | null;
+  /** Job details are only cached once the run has completed; they are final then. */
+  completedJobs?: GitHubJob[];
+};
+
+const runCache = new Map<number, RunCache>();
+
+/** Test hook: forgets everything cached about previous runs. */
+export function clearGitHubRunCache(): void {
+  runCache.clear();
+}
+
+function cacheFor(id: number): RunCache {
+  let entry = runCache.get(id);
+  if (!entry) {
+    entry = {};
+    runCache.set(id, entry);
+  }
+  return entry;
+}
+
+async function fetchActor(repository: string, run: GitHubRunRaw): Promise<string | null> {
+  const cache = cacheFor(run.databaseId);
+  if (cache.actor !== undefined) return cache.actor;
+  const login = await command("gh", [
+    "api", `repos/${repository}/actions/runs/${run.databaseId}`, "--jq", ".actor.login",
+  ]);
+  cache.actor = login || null;
+  return cache.actor;
+}
+
+async function fetchJobs(run: GitHubRunRaw): Promise<GitHubJob[]> {
+  const cache = cacheFor(run.databaseId);
+  if (cache.completedJobs) return cache.completedJobs;
+  const detail = parseJSON<{ jobs?: GitHubJob[] }>(
+    await command("gh", ["run", "view", String(run.databaseId), "--json", "jobs"])
+  );
+  const jobs = detail?.jobs ?? [];
+  if (run.status === "completed") cache.completedJobs = jobs;
+  return jobs;
+}
+
 function flattenSteps(jobs: GitHubJob[]): Pipeline["steps"] {
   return jobs.map((job) => {
     const activeStep = job.steps.find((s) => s.status === "in_progress");
@@ -85,12 +128,7 @@ export const githubProvider: Provider = {
 
     const pipelines: Pipeline[] = await Promise.all(
       runs.map(async (run) => {
-        const detail = parseJSON<{ jobs?: GitHubJob[] }>(
-          await command("gh", ["run", "view", String(run.databaseId), "--json", "jobs"])
-        );
-        const actorLogin = await command("gh", [
-          "api", `repos/${repository}/actions/runs/${run.databaseId}`, "--jq", ".actor.login",
-        ]);
+        const [jobs, actorLogin] = await Promise.all([fetchJobs(run), fetchActor(repository, run)]);
 
         return {
           provider: "github-actions" as const,
@@ -100,7 +138,9 @@ export const githubProvider: Provider = {
           actor: actorLogin || null,
           url: `https://github.com/${repository}/actions/runs/${run.databaseId}`,
           commit: run.headSha?.slice(0, 7) || null,
-          steps: flattenSteps(detail?.jobs ?? []),
+          commitSha: run.headSha || null,
+          startedAt: run.createdAt || null,
+          steps: flattenSteps(jobs),
         };
       })
     );
@@ -109,7 +149,10 @@ export const githubProvider: Provider = {
   },
 
   async getLogs(pipeline: Pipeline): Promise<string | null> {
-    return command("gh", ["run", "view", pipeline.id, "--log-failed"]);
+    const failed = await command("gh", ["run", "view", pipeline.id, "--log-failed"]);
+    if (failed) return failed;
+    // Some failures (e.g. a job that was cancelled or timed out) have no failed-step log.
+    return command("gh", ["run", "view", pipeline.id, "--log"]);
   },
 
   async rerun(pipeline: Pipeline): Promise<boolean> {

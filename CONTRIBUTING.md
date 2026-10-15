@@ -40,10 +40,10 @@ npm run format
 
 ### File Organization
 
-- One module per concern (`github/`, `context/`, `agents/`)
+- One module per concern (`providers/`, `context/`, `agents/`, `config/`)
 - UI code lives in `tui/` (and later `ui/menubar/`)
-- Shared types go in `types/index.ts`
-- Tests go in `src/__tests__/`
+- Shared provider types live in `providers/types.ts`
+- Unit tests sit next to the module (`report.test.ts`); cross-module integration tests go in `src/__tests__/`
 
 ### Git
 
@@ -53,8 +53,10 @@ npm run format
 
 ### Testing
 
-- Integration tests use a fake `gh` CLI script in a temp git repo
+- Pure logic (log scoring, diff resolution, planning) is unit-tested directly
+- Anything that shells out uses a fake `gh` / `vercel` script on PATH in a temp git repo; see `src/__tests__/helpers.ts`
 - No mocking internal modules — test through the public API
+- Tests must not depend on what is installed on the developer's machine (inject `detectInstalled`, set `PUX_CONFIG_DIR`)
 - Tests must clean up temp directories
 
 ## Architecture
@@ -77,8 +79,7 @@ Priority order:
 - SaaS / cloud sync
 - Team features / dashboards
 - AI agents (we generate context, not run agents)
-- Support for non-macOS (yet)
-- Support for non-GitHub CI (yet)
+- Support for CI providers beyond GitHub Actions and Vercel (yet)
 
 ## Questions?
 
