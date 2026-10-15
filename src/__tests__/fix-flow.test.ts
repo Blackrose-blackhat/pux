@@ -141,6 +141,21 @@ printf 'export const add = (a: number, b: number) => a + b;\\n' > src/math.ts`);
     expect(repo.git("worktree list")).not.toContain("pux-fix-12345");
   });
 
+  it("treats a failed exit with no changes as an error, even when the agent wrote to stdout", async () => {
+    // claude -p prints "Failed to authenticate: OAuth session expired" to stdout and exits 1.
+    await repo.fakeBin("claude", `echo "Failed to authenticate: OAuth session expired"; exit 1`);
+
+    await expect(runFix({ root: repo.root, failure, agent: claude })).rejects.toThrow(/Claude Code exited with code 1[\s\S]*Failed to authenticate/);
+    expect(repo.git("branch --list pux/fix-12345")).toBe("");
+  });
+
+  it("keeps changes the agent made before exiting with an error", async () => {
+    await repo.fakeBin("claude", `printf 'export const add = (a: number, b: number) => a + b;\\n' > src/math.ts; echo "done"; exit 2`);
+
+    const result = await runFix({ root: repo.root, failure, agent: claude });
+    expect(result).toMatchObject({ kind: "fixed", files: ["src/math.ts"] });
+  });
+
   it("refuses to overwrite an existing fix branch", async () => {
     repo.git("branch pux/fix-12345");
     await repo.fakeBin("claude", `exit 0`);

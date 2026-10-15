@@ -220,7 +220,12 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return result;
 }
 
-type AgentRun = { stdout: string; exitCode: number | null };
+type AgentRun = { stdout: string; stderr: string; exitCode: number | null };
+
+function agentFailure(agent: AgentSpec, run: AgentRun): Error {
+  const detail = `${run.stdout}\n${run.stderr}`.trim().split("\n").filter((line) => line.trim().length > 0).slice(-5).join("\n");
+  return new Error(`${agent.label} exited with code ${run.exitCode}${detail ? `:\n${detail}` : "."}`);
+}
 
 function runAgent(agent: AgentSpec, prompt: string, cwd: string, timeoutMs: number): Promise<AgentRun> {
   return new Promise((resolve, reject) => {
@@ -246,12 +251,7 @@ function runAgent(agent: AgentSpec, prompt: string, cwd: string, timeoutMs: numb
         reject(new Error(`${agent.label} did not finish within ${Math.round(timeoutMs / 60000)} minutes.`));
         return;
       }
-      if (code !== 0 && stdout.trim().length === 0) {
-        const detail = stderr.trim().split("\n").slice(-5).join("\n");
-        reject(new Error(`${agent.label} exited with code ${code}${detail ? `:\n${detail}` : "."}`));
-        return;
-      }
-      resolve({ stdout, exitCode: code });
+      resolve({ stdout, stderr, exitCode: code });
     });
   });
 }
@@ -319,6 +319,8 @@ export async function runFix(options: RunFixOptions): Promise<FixResult> {
 
     const head = await git(worktree, ["rev-parse", "HEAD"]);
     if (head === failure.commit) {
+      // Nothing changed: a failed exit means the agent never got to work (auth, quota, crash).
+      if (run.exitCode !== 0) throw agentFailure(agent, run);
       await removeWorktree(root, worktree);
       await command("git", ["branch", "-D", branch], { cwd: root });
       return { kind: "no-changes", agent, explanation };
