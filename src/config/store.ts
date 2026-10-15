@@ -12,9 +12,18 @@ export type UpdateCheck = {
   latest: string | null;
 };
 
+/** The background install Pux last started, so it is retried at most daily and announced once. */
+export type UpdateAttempt = {
+  version: string;
+  startedAt: string;
+};
+
 export type PuxConfig = {
   repos: Record<string, RepoDecision>;
   updateCheck?: UpdateCheck;
+  /** Set to false to keep the update notice but never install anything. */
+  autoUpdate?: boolean;
+  updateAttempt?: UpdateAttempt;
 };
 
 const defaults: PuxConfig = { repos: {} };

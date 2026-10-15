@@ -16,7 +16,7 @@ import { command } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
 import { pollIntervalFor } from "./polling.js";
-import { getUpdateNotice } from "../utils/version-check.js";
+import { autoUpdateLine } from "../utils/auto-update.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -78,10 +78,10 @@ export function WatchApp() {
   const generatedFor = useRef<string | null>(null);
   const providersRef = useRef<Provider[]>([]);
 
-  // Background update check: never blocks, never prompts.
+  // Background update: checks once a day, installs the next version quietly, never blocks or prompts.
   useEffect(() => {
     let active = true;
-    void getUpdateNotice().then((line) => { if (active) setUpdateNotice(line); });
+    void autoUpdateLine().then((line) => { if (active) setUpdateNotice(line); });
     return () => { active = false; };
   }, []);
 

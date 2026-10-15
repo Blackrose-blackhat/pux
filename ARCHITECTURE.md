@@ -99,7 +99,11 @@ A small JSON file at `$PUX_CONFIG_DIR`, `$XDG_CONFIG_HOME/pux`, or `~/.config/pu
 
 ### `src/utils/version-check.ts`
 
-Looks up the latest published version at most once a day, in the background, and formats one dim line with the right upgrade command (`brew upgrade pux` under Homebrew). It never blocks, prompts, or escalates.
+Looks up the latest published version at most once a day, caches it in the config, and formats the manual upgrade line (`brew upgrade pux` under Homebrew). Pure version comparison lives here too.
+
+### `src/utils/auto-update.ts`
+
+Acts on that check. `installChannel` reads the script path to tell Homebrew, global npm and npx installs apart; `installCommand` maps a channel to `brew upgrade pux` or `npm install -g pux.sh@<version>` (nothing for npx). `planAutoUpdate` is pure: it decides between install, announce (the attempted version is now running), notice (auto-update off, npx, or an install started less than a day ago that has not landed) and none. `autoUpdateLine` runs the check, spawns the installer detached with its output ignored, records the attempt in the config, and returns the one dim line the CLI and TUI print. It never blocks, prompts, escalates to sudo, or throws. `PUX_NO_AUTO_UPDATE=1` or `autoUpdate: false` in the config turns installs off.
 
 ### `src/tui/WatchApp.tsx`
 
@@ -151,7 +155,8 @@ pux/
 │   ├── agents/instructions.ts   # Plan/apply agent instruction pointers
 │   ├── agents/fix.ts            # Detect agents, run them on a fix branch
 │   ├── config/store.ts          # ~/.config/pux/config.json
-│   ├── utils/version-check.ts   # Background update notice
+│   ├── utils/version-check.ts   # Daily version check + manual notice
+│   ├── utils/auto-update.ts     # Background self-upgrade
 │   ├── tui/                     # Ink UI, polling interval, cat
 │   └── __tests__/               # Integration tests + helpers
 ├── dist/                        # Build output (ESM, Node 22)
