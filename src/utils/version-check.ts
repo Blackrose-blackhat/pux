@@ -1,80 +1,97 @@
 import { execFile } from "node:child_process";
-import { createInterface } from "node:readline";
-import { promisify } from "node:util";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { loadConfig, saveConfig } from "../config/store.js";
 
 const execFileAsync = promisify(execFile);
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
-
-function askUser(question: string): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === "y");
-    });
-  });
+function findPackageJson(): { version: string } {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 4; i += 1) {
+    const candidate = join(dir, "package.json");
+    if (existsSync(candidate)) return JSON.parse(readFileSync(candidate, "utf8")) as { version: string };
+    dir = dirname(dir);
+  }
+  return { version: "0.0.0" };
 }
 
-export async function checkForUpdate(): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync("npm", ["view", "pux.sh", "version"], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    const latest = stdout.trim();
-    if (latest && latest !== pkg.version) return latest;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export async function autoUpdate(): Promise<boolean> {
-  const latest = await checkForUpdate();
-  if (!latest) return false;
-
-  const current = pkg.version;
-  console.log(`\x1b[33m⚠ pux ${current} → ${latest} available.\x1b[0m`);
-
-  const shouldUpdate = await askUser(`  Update now? [Y/n] `);
-  if (!shouldUpdate) {
-    console.log(`\x1b[2m  Skipped. Run \`npm install -g pux.sh@latest\` to update manually.\x1b[0m\n`);
-    return false;
-  }
-
-  console.log(`\x1b[33m  Updating...\x1b[0m`);
-
-  try {
-    await execFileAsync("npm", ["install", "-g", "pux.sh@latest"], {
-      encoding: "utf8",
-      timeout: 60000,
-    });
-    console.log(`\x1b[32m✓ Updated to pux ${latest}\x1b[0m\n`);
-    return true;
-  } catch {
-    if (process.platform !== "win32") {
-      try {
-        await execFileAsync("sudo", ["npm", "install", "-g", "pux.sh@latest"], {
-          encoding: "utf8",
-          timeout: 60000,
-        });
-        console.log(`\x1b[32m✓ Updated to pux ${latest}\x1b[0m\n`);
-        return true;
-      } catch {
-        console.log(`\x1b[31m✗ Auto-update failed. Run manually: npm install -g pux.sh@latest\x1b[0m\n`);
-        return false;
-      }
-    }
-    console.log(`\x1b[31m✗ Auto-update failed. Run manually: npm install -g pux.sh@latest\x1b[0m\n`);
-    return false;
-  }
-}
+const pkg = findPackageJson();
 
 export function getCurrentVersion(): string {
   return pkg.version;
+}
+
+export function isNewerVersion(candidate: string, current: string): boolean {
+  const a = candidate.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const b = current.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+export function isHomebrewInstall(scriptPath: string = process.argv[1] ?? ""): boolean {
+  return /\/(?:Cellar|homebrew|Homebrew)\//.test(scriptPath);
+}
+
+export function upgradeCommand(homebrew: boolean): string {
+  return homebrew ? "brew upgrade pux" : "npm install -g pux.sh@latest";
+}
+
+export function formatUpdateNotice(current: string, latest: string, homebrew: boolean): string {
+  return `pux ${latest} available (you have ${current}) · ${upgradeCommand(homebrew)}`;
+}
+
+async function fetchLatestFromNpm(): Promise<string> {
+  const { stdout } = await execFileAsync("npm", ["view", "pux.sh", "version"], { encoding: "utf8", timeout: 3000 });
+  return stdout.trim();
+}
+
+export type CheckOptions = {
+  current?: string;
+  fetchLatest?: () => Promise<string>;
+  now?: Date;
+};
+
+const cacheTtlMs = 24 * 60 * 60 * 1000;
+
+/** Returns the newest published version when it is newer than `current`, checking npm at most once a day. */
+export async function checkForUpdate({
+  current = pkg.version,
+  fetchLatest = fetchLatestFromNpm,
+  now = new Date(),
+}: CheckOptions = {}): Promise<string | null> {
+  const config = await loadConfig();
+  const cached = config.updateCheck;
+  let latest: string | null;
+
+  if (cached && now.getTime() - Date.parse(cached.checkedAt) < cacheTtlMs) {
+    latest = cached.latest;
+  } else {
+    try {
+      latest = await fetchLatest();
+    } catch {
+      latest = null;
+    }
+    try {
+      await saveConfig({ ...config, updateCheck: { checkedAt: now.toISOString(), latest } });
+    } catch {
+      // A read-only config dir just means we check again next time.
+    }
+  }
+
+  return latest && isNewerVersion(latest, current) ? latest : null;
+}
+
+/** One dim line to show when an update exists, or null. Never throws. */
+export async function getUpdateNotice(): Promise<string | null> {
+  try {
+    const latest = await checkForUpdate();
+    return latest ? formatUpdateNotice(pkg.version, latest, isHomebrewInstall()) : null;
+  } catch {
+    return null;
+  }
 }

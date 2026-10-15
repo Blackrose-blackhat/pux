@@ -5,7 +5,7 @@ import { render } from "ink";
 import React from "react";
 import { WatchApp } from "./tui/WatchApp.js";
 import { runDoctor } from "./commands/doctor.js";
-import { autoUpdate, getCurrentVersion } from "./utils/version-check.js";
+import { getCurrentVersion, getUpdateNotice } from "./utils/version-check.js";
 
 const program = new Command();
 
@@ -17,8 +17,7 @@ program
 program
   .command("watch")
   .description("Watch the GitHub Actions run for the current commit.")
-  .action(async () => {
-    await autoUpdate();
+  .action(() => {
     // Enter alternate screen buffer + clear
     process.stdout.write("\x1B[?1049h\x1B[2J\x1B[H");
     const instance = render(<WatchApp />);
@@ -32,8 +31,10 @@ program
   .command("doctor")
   .description("Check the local tools Pux will need.")
   .action(async () => {
-    await autoUpdate();
+    const notice = getUpdateNotice();
     await runDoctor();
+    const line = await notice;
+    if (line) console.log(`\x1b[2m${line}\x1b[0m`);
   });
 
 program.parse();

@@ -14,6 +14,7 @@ import { command } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
 import { pollIntervalFor } from "./polling.js";
+import { getUpdateNotice } from "../utils/version-check.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -63,9 +64,17 @@ export function WatchApp() {
   const [contextStatus, setContextStatus] = useState<"idle" | "generating" | "written" | "error">("idle");
   const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
   const [consent, setConsent] = useState<PendingConsent | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [rerunStatus, setRerunStatus] = useState<"idle" | "rerunning" | "done" | "error">("idle");
   const generatedFor = useRef<string | null>(null);
   const providersRef = useRef<Provider[]>([]);
+
+  // Background update check: never blocks, never prompts.
+  useEffect(() => {
+    let active = true;
+    void getUpdateNotice().then((line) => { if (active) setUpdateNotice(line); });
+    return () => { active = false; };
+  }, []);
 
   // Initial detection
   useEffect(() => {
@@ -332,6 +341,7 @@ export function WatchApp() {
       {!consent && (
         <Box marginTop={1}><Text dimColor>  {hasFailure ? "press r to re-run · q to quit" : "press q to quit"}</Text></Box>
       )}
+      {updateNotice && <Text dimColor>  {updateNotice}</Text>}
     </Box>
   );
 }
