@@ -38,9 +38,9 @@ export type WatchSnapshot =
   | { kind: "waiting"; repository: string; commit: string }
   | { kind: "run"; repository: string; commit: string; run: GitHubRun; jobs: GitHubJob[] };
 
-export async function command(binary: string, args: string[]): Promise<string | null> {
+export async function command(binary: string, args: string[], options: { cwd?: string } = {}): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(binary, args, { encoding: "utf8" });
+    const { stdout } = await execFileAsync(binary, args, { encoding: "utf8", cwd: options.cwd });
     return stdout.trim();
   } catch {
     return null;

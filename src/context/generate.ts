@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { command, type WatchSnapshot } from "../github/client.js";
+import { collectDiff } from "./diff.js";
 import {
   detectReproCommand,
   extractErrorWindow,
@@ -42,13 +43,9 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
   const failedLog = await command("gh", ["run", "view", String(snapshot.run.databaseId), "--log-failed"]);
   if (!failedLog) throw new Error("Could not download failed-step logs from GitHub.");
 
-  const hasParent = await command("git", ["rev-parse", "HEAD^"]);
-  const [changedFilesRaw, diff] = hasParent
-    ? await Promise.all([
-        command("git", ["diff", "--name-only", "HEAD^", "HEAD"]),
-        command("git", ["diff", "--no-ext-diff", "HEAD^", "HEAD"]),
-      ])
-    : [null, null];
+  const defaultBranch = await command("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"]);
+  const sha = snapshot.run.headSha || snapshot.commit;
+  const fullDiff = await collectDiff({ root, sha, defaultBranch: defaultBranch || null });
 
   const label = snapshot.run.workflowName ?? snapshot.run.name;
   const logSteps = parseFailedLog(failedLog);
@@ -59,24 +56,23 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
   }));
   const allLines = logSteps.flatMap((step) => step.lines);
   const errorText = steps.map((step) => step.error).join("\n");
-  const changedFiles = changedFilesRaw?.trim().split("\n").filter(Boolean) ?? [];
-  const overlapping = findOverlap(errorText, changedFiles);
+  const overlapping = findOverlap(errorText, fullDiff.changedFiles);
   const reproCommand = detectReproCommand(allLines.join("\n"), label, "github-actions");
 
-  const relevantDiff = overlapping.length > 0 && diff
-    ? await command("git", ["diff", "--no-ext-diff", "HEAD^", "HEAD", "--", ...overlapping])
-    : diff;
+  const relevantDiff = overlapping.length > 0
+    ? await collectDiff({ root, sha, defaultBranch: defaultBranch || null, paths: overlapping })
+    : fullDiff;
 
   const md = renderReport({
     provider: "github-actions",
     pipelineName: label,
-    commit: snapshot.commit,
+    commit: sha,
     exitCode: parseExitCode(allLines),
     reproCommand,
     steps,
     overlapping,
-    diffRange: hasParent ? "HEAD^..HEAD" : null,
-    diff: relevantDiff,
+    diffRange: relevantDiff.range,
+    diff: relevantDiff.diff,
   });
 
   const folder = folderName(snapshot.run.createdAt, snapshot.run.databaseId);
@@ -92,7 +88,8 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
       repository: snapshot.repository,
       workflow: label,
       runId: snapshot.run.databaseId,
-      commit: snapshot.commit,
+      commit: sha,
+      diffRange: relevantDiff.range,
       startedAt: snapshot.run.createdAt,
       reproduce: reproCommand,
       overlappingFiles: overlapping,
