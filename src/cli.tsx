@@ -6,7 +6,8 @@ import React from "react";
 import { WatchApp } from "./tui/WatchApp.js";
 import { runDoctor } from "./commands/doctor.js";
 import { runFixCommand } from "./commands/fix.js";
-import { getCurrentVersion, getUpdateNotice } from "./utils/version-check.js";
+import { autoUpdateLine } from "./utils/auto-update.js";
+import { getCurrentVersion } from "./utils/version-check.js";
 
 const program = new Command();
 
@@ -35,14 +36,17 @@ program
   .option("--push", "push the fix branch to origin when the agent changed something")
   .option("--dry-run", "show the agent and prompt that would be used without running anything")
   .action(async (options: { agent?: string; push?: boolean; dryRun?: boolean }) => {
+    const notice = autoUpdateLine();
     await runFixCommand(options);
+    const line = await notice;
+    if (line) console.log(`\x1b[2m${line}\x1b[0m`);
   });
 
 program
   .command("doctor")
   .description("Check the local tools Pux will need.")
   .action(async () => {
-    const notice = getUpdateNotice();
+    const notice = autoUpdateLine();
     await runDoctor();
     const line = await notice;
     if (line) console.log(`\x1b[2m${line}\x1b[0m`);

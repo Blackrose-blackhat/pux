@@ -215,6 +215,24 @@ Checks that required tools are installed and mentions a newer Pux version when o
 
 ---
 
+## Updates
+
+Pux keeps itself current. Once a day, `pux watch`, `pux fix` and `pux doctor` check npm for a newer version. When one exists, the upgrade starts in the background through the channel that installed Pux (`brew upgrade pux` for Homebrew, `npm install -g pux.sh@<version>` for a global npm install) while the command you ran starts immediately. The new version takes effect the next time you run Pux, so a running `pux watch` is never interrupted.
+
+```
+pux 0.1.6 available · updating in the background, takes effect next run
+```
+
+```
+pux updated to 0.1.6
+```
+
+Pux never uses `sudo`. If the global install directory is not writable, the upgrade fails quietly and Pux shows the manual command instead; it retries at most once a day. `npx pux.sh` users always get the latest version from npm and are left alone.
+
+To keep the notice but never install anything, set `PUX_NO_AUTO_UPDATE=1` or put `"autoUpdate": false` in `~/.config/pux/config.json`.
+
+---
+
 ## Agent Integrations
 
 Pux can add a short pointer to your agent instruction files so every coding agent reads `.ai-context/failure.md` before diagnosing a CI failure. The first time you run `pux watch` in a repository it lists exactly which files it would create or append and asks for a yes or no. The answer is remembered per repository.
@@ -239,7 +257,7 @@ Existing files are appended to, never rewritten. New files are only created for 
 - The agent instruction files above, only after you say yes.
 - Local `pux/fix-<pipeline id>` branches created by `pux fix`. They are pushed only with `--push`.
 
-Nothing else. Your answer, and the once-a-day update check, live in `~/.config/pux/config.json` (or `$XDG_CONFIG_HOME/pux/`). Delete a repository's entry there to be asked again.
+Nothing else. Your answer, the once-a-day update check, and the auto-update switch live in `~/.config/pux/config.json` (or `$XDG_CONFIG_HOME/pux/`). Delete a repository's entry there to be asked again.
 
 ---
 

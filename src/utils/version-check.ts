@@ -85,13 +85,3 @@ export async function checkForUpdate({
 
   return latest && isNewerVersion(latest, current) ? latest : null;
 }
-
-/** One dim line to show when an update exists, or null. Never throws. */
-export async function getUpdateNotice(): Promise<string | null> {
-  try {
-    const latest = await checkForUpdate();
-    return latest ? formatUpdateNotice(pkg.version, latest, isHomebrewInstall()) : null;
-  } catch {
-    return null;
-  }
-}
