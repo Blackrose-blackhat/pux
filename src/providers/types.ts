@@ -7,7 +7,12 @@ export type Pipeline = {
   status: PipelineStatus;
   actor: string | null;
   url: string | null;
+  /** Short commit hash for display. */
   commit?: string | null;
+  /** Full commit SHA the pipeline ran for, when the provider exposes it. */
+  commitSha: string | null;
+  /** ISO timestamp the pipeline started, used to name the failure bundle. */
+  startedAt: string | null;
   steps?: { name: string; status: string }[];
 };
 

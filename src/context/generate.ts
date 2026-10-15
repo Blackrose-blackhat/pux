@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { command, type WatchSnapshot } from "../github/client.js";
+import { command } from "../github/client.js";
+import type { Pipeline, Provider } from "../providers/types.js";
 import { collectDiff } from "./diff.js";
 import {
   detectReproCommand,
@@ -14,6 +15,12 @@ import {
 
 const aiContextIgnoreRule = ".ai-context/";
 
+export type GenerateOptions = {
+  provider: Provider;
+  pipeline: Pipeline;
+  repository: string | null;
+};
+
 async function optionalFile(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf8");
@@ -22,9 +29,11 @@ async function optionalFile(path: string): Promise<string | null> {
   }
 }
 
-function folderName(iso: string, runId: number): string {
-  const clean = iso.replace(/[-:]/g, "").replace("T", "-").replace("Z", "");
-  return `${clean}-${runId}`;
+function folderName(startedAt: string | null, id: string): string {
+  const iso = startedAt ?? new Date().toISOString();
+  const stamp = iso.replace(/\.\d+Z$/, "").replace(/[-:]/g, "").replace("T", "-").replace("Z", "");
+  const safeId = id.replace(/[^A-Za-z0-9._-]/g, "_");
+  return `${stamp}-${safeId}`;
 }
 
 async function ensureAiContextIgnored(root: string): Promise<void> {
@@ -35,20 +44,22 @@ async function ensureAiContextIgnored(root: string): Promise<void> {
   await appendFile(gitignore, `${prefix}${aiContextIgnoreRule}\n`, "utf8");
 }
 
-/** Generates a lean failure context that gives AI agents exactly what they need to diagnose and fix. */
-export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { kind: "run" }>): Promise<string> {
+/** Writes `.ai-context/failure.md` plus a timestamped bundle for a failed pipeline. Returns the bundle directory. */
+export async function generateFailureContext({ provider, pipeline, repository }: GenerateOptions): Promise<string> {
   const root = await command("git", ["rev-parse", "--show-toplevel"]);
   if (!root) throw new Error("Not inside a Git repository.");
 
-  const failedLog = await command("gh", ["run", "view", String(snapshot.run.databaseId), "--log-failed"]);
-  if (!failedLog) throw new Error("Could not download failed-step logs from GitHub.");
+  const log = await provider.getLogs(pipeline);
+  if (!log) throw new Error(`Could not download logs for ${pipeline.name} from ${provider.name}.`);
 
-  const defaultBranch = await command("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"]);
-  const sha = snapshot.run.headSha || snapshot.commit;
-  const fullDiff = await collectDiff({ root, sha, defaultBranch: defaultBranch || null });
+  const sha = pipeline.commitSha ?? (await command("git", ["rev-parse", "HEAD"], { cwd: root }));
+  if (!sha) throw new Error("Could not determine the commit for this pipeline.");
 
-  const label = snapshot.run.workflowName ?? snapshot.run.name;
-  const logSteps = parseFailedLog(failedLog);
+  const defaultBranch =
+    (await command("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])) || null;
+  const fullDiff = await collectDiff({ root, sha, defaultBranch });
+
+  const logSteps = parseFailedLog(log);
   const steps: ReportStep[] = logSteps.map((step) => ({
     job: step.job,
     step: step.step,
@@ -57,15 +68,15 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
   const allLines = logSteps.flatMap((step) => step.lines);
   const errorText = steps.map((step) => step.error).join("\n");
   const overlapping = findOverlap(errorText, fullDiff.changedFiles);
-  const reproCommand = detectReproCommand(allLines.join("\n"), label, "github-actions");
+  const reproCommand = detectReproCommand(allLines.join("\n"), pipeline.name, pipeline.provider);
 
   const relevantDiff = overlapping.length > 0
-    ? await collectDiff({ root, sha, defaultBranch: defaultBranch || null, paths: overlapping })
+    ? await collectDiff({ root, sha, defaultBranch, paths: overlapping })
     : fullDiff;
 
   const md = renderReport({
-    provider: "github-actions",
-    pipelineName: label,
+    provider: pipeline.provider,
+    pipelineName: pipeline.name,
     commit: sha,
     exitCode: parseExitCode(allLines),
     reproCommand,
@@ -75,9 +86,8 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
     diff: relevantDiff.diff,
   });
 
-  const folder = folderName(snapshot.run.createdAt, snapshot.run.databaseId);
   const directory = join(root, ".ai-context");
-  const failureDir = join(directory, "failures", folder);
+  const failureDir = join(directory, "failures", folderName(pipeline.startedAt, pipeline.id));
 
   await ensureAiContextIgnored(root);
   await mkdir(failureDir, { recursive: true });
@@ -85,12 +95,14 @@ export async function generateFailureContext(snapshot: Extract<WatchSnapshot, { 
   await writeFile(
     join(failureDir, "metadata.json"),
     `${JSON.stringify({
-      repository: snapshot.repository,
-      workflow: label,
-      runId: snapshot.run.databaseId,
+      provider: pipeline.provider,
+      pipelineId: pipeline.id,
+      pipelineName: pipeline.name,
+      url: pipeline.url,
+      repository,
       commit: sha,
       diffRange: relevantDiff.range,
-      startedAt: snapshot.run.createdAt,
+      startedAt: pipeline.startedAt,
       reproduce: reproCommand,
       overlappingFiles: overlapping,
     }, null, 2)}\n`,

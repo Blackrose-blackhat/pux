@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ensureAgentInstructions, type AgentInstructionResult } from "../agents/instructions.js";
 import { generateFailureContext } from "../context/generate.js";
-import { command, getWatchSnapshot, type WatchSnapshot } from "../github/client.js";
+import { command } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
 
@@ -50,7 +50,6 @@ export function WatchApp() {
   const [commit, setCommit] = useState<string | null>(null);
   const [contextStatus, setContextStatus] = useState<"idle" | "generating" | "written" | "error">("idle");
   const [agentInstructions, setAgentInstructions] = useState<AgentInstructionResult | null>(null);
-  const [legacySnapshot, setLegacySnapshot] = useState<WatchSnapshot>({ kind: "checking" });
   const [rerunStatus, setRerunStatus] = useState<"idle" | "rerunning" | "done" | "error">("idle");
   const generatedFor = useRef<string | null>(null);
   const providersRef = useRef<Provider[]>([]);
@@ -185,9 +184,6 @@ export function WatchApp() {
           })
         );
         if (active) setProviderStates(states);
-
-        const legacy = await getWatchSnapshot();
-        if (active) setLegacySnapshot(legacy);
       } finally {
         isPolling.current = false;
       }
@@ -209,16 +205,23 @@ export function WatchApp() {
     void ensureAgentInstructions().then(setAgentInstructions).catch(() => setAgentInstructions(null));
   }, [phase]);
 
+  // Generate failure context once per failed pipeline, whichever provider it came from.
   useEffect(() => {
-    if (legacySnapshot.kind !== "run" || legacySnapshot.run.status !== "completed" || legacySnapshot.run.conclusion !== "failure") return;
-    if (generatedFor.current === String(legacySnapshot.run.databaseId)) return;
+    for (const state of providerStates) {
+      if (state.snapshot.kind !== "active") continue;
+      const failed = state.snapshot.pipelines.find((p) => p.status === "failed");
+      if (!failed) continue;
+      const key = `${failed.provider}:${failed.id}`;
+      if (generatedFor.current === key) return;
 
-    generatedFor.current = String(legacySnapshot.run.databaseId);
-    setContextStatus("generating");
-    void generateFailureContext(legacySnapshot)
-      .then(() => setContextStatus("written"))
-      .catch(() => setContextStatus("error"));
-  }, [legacySnapshot]);
+      generatedFor.current = key;
+      setContextStatus("generating");
+      void generateFailureContext({ provider: state.provider, pipeline: failed, repository })
+        .then(() => setContextStatus("written"))
+        .catch(() => setContextStatus("error"));
+      return;
+    }
+  }, [providerStates, repository]);
 
   // --- RENDER ---
 

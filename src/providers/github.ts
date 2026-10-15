@@ -100,6 +100,8 @@ export const githubProvider: Provider = {
           actor: actorLogin || null,
           url: `https://github.com/${repository}/actions/runs/${run.databaseId}`,
           commit: run.headSha?.slice(0, 7) || null,
+          commitSha: run.headSha || null,
+          startedAt: run.createdAt || null,
           steps: flattenSteps(detail?.jobs ?? []),
         };
       })
@@ -109,7 +111,10 @@ export const githubProvider: Provider = {
   },
 
   async getLogs(pipeline: Pipeline): Promise<string | null> {
-    return command("gh", ["run", "view", pipeline.id, "--log-failed"]);
+    const failed = await command("gh", ["run", "view", pipeline.id, "--log-failed"]);
+    if (failed) return failed;
+    // Some failures (e.g. a job that was cancelled or timed out) have no failed-step log.
+    return command("gh", ["run", "view", pipeline.id, "--log"]);
   },
 
   async rerun(pipeline: Pipeline): Promise<boolean> {
