@@ -1,3 +1,4 @@
+import Foundation
 import PuxCore
 
 check("runner reports a pass") {
@@ -92,6 +93,21 @@ check("rejects malformed JSON and missing fields") {
   try expect((try? ProtocolCodec.decode(line: "not json")) == nil)
   try expect((try? ProtocolCodec.decode(line: #"{"type":"rerun-done","repo":"/r"}"#)) == nil)
   try expect((try? ProtocolCodec.decode(line: #"{"type":"state","repo":"/r","repository":null,"branch":null,"commit":null,"providers":[{"provider":"x","snapshot":{"kind":"weird"}}]}"#)) == nil)
+}
+
+check("notched display: window is flush with the hardware notch") {
+  let m = ScreenMetrics(frame: CGRect(x: 0, y: 0, width: 1512, height: 982), safeAreaTop: 32,
+                        auxiliaryTopLeft: CGRect(x: 0, y: 950, width: 656, height: 32), auxiliaryTopRight: CGRect(x: 856, y: 950, width: 656, height: 32))
+  let l = NotchGeometry.layout(for: m)
+  try expect(l.hasNotch); try expectEqual(l.notchRect, CGRect(x: 656, y: 950, width: 200, height: 32))
+  try expectEqual(l.windowFrame, CGRect(x: 576, y: 982 - 272, width: 360, height: 272))
+}
+
+check("plain display: centred 160x30 pill") {
+  let m = ScreenMetrics(frame: CGRect(x: 0, y: 0, width: 2560, height: 1440), safeAreaTop: 0, auxiliaryTopLeft: nil, auxiliaryTopRight: nil)
+  let l = NotchGeometry.layout(for: m)
+  try expect(!l.hasNotch); try expectEqual(l.notchRect, CGRect(x: 1200, y: 1410, width: 160, height: 30))
+  try expectEqual(l.windowFrame.size, CGSize(width: 360, height: 270))
 }
 
 finish()
