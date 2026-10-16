@@ -18,10 +18,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var openProgress: CGFloat = 0
     @Published private(set) var reduceMotion: Bool
     @Published var layout: NotchLayout
-    /// The result of the last add (picker or debug flag) for the footer; cleared after
+    /// The result of the last add (picker, drop or debug flag) for the footer; cleared after
     /// `addRepoMessageDuration`. `addRepoFailed` picks its colour.
     @Published private(set) var addRepoMessage: String?
     @Published private(set) var addRepoFailed = false
+    /// A drag with files is over the notch: the panel body says "Drop to watch".
+    @Published private(set) var dropHint = false
     let engine: EngineSupervisor
     let prefs = Preferences()
     /// Posts a notification for each failure the engine reports; set by the app delegate.
@@ -249,6 +251,22 @@ final class AppModel: ObservableObject {
         }
         addRepoMessageTimer = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.addRepoMessageDuration, execute: work)
+    }
+
+    // MARK: - Drag and drop (called by the window)
+
+    /// A drag carrying files came over the notch (true) or left without dropping (false).
+    /// Repeats are ignored, so the end of a drag can report false whether or not it dropped.
+    func dragHover(_ inside: Bool) {
+        guard inside != dropHint else { return }
+        dropHint = inside
+        dispatch(inside ? .hoverEntered : .hoverLeft)
+    }
+
+    /// Files were dropped on the notch: add each one (non-folders are refused with a message).
+    func dropped(_ urls: [URL]) {
+        dropHint = false
+        addRepositories(urls)
     }
 
     private static func copy(_ text: String) {

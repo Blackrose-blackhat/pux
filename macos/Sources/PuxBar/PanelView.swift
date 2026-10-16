@@ -31,7 +31,9 @@ struct PanelView: View {
 
     @ViewBuilder
     private func content(_ state: AppState, _ repo: RepoState?) -> some View {
-        if state.showingSettings {
+        if model.dropHint {
+            placeholder("Drop to watch")
+        } else if state.showingSettings {
             SettingsView(prefs: model.prefs, selectedRepo: repo,
                          onAddRepo: model.addRepository,
                          onRemoveRepo: { if let repo { model.removeRepo(repo: repo) } },
