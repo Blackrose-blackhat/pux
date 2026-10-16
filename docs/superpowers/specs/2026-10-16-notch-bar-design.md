@@ -256,3 +256,19 @@ real failure end to end.
 - Sharing one poll loop between the TUI and the app.
 - Notarization and Developer ID signing.
 - Linux or Windows tray equivalents.
+
+## Implementation notes (added while planning)
+
+- **One worker process per repo.** `detectProviders`, `generateFailureContext`
+  and the providers run shell commands in the current directory. Rather than
+  thread a `cwd` through all of them, `pux serve` spawns a hidden
+  `pux serve-worker <path>` child per registered repo that `chdir`s into it.
+  The supervisor multiplexes their events and routes commands. The protocol to
+  the app is unchanged.
+- **Swift tests run as an executable.** Only the Command Line Tools are
+  installed on the author's Mac; `swift build` works but XCTest and Swift
+  Testing do not link. Unit tests live in a `PuxCoreCheck` executable target
+  with a 30-line assertion runner (`swift run PuxCoreCheck`, exit 1 on failure)
+  and run the same way in CI.
+- **Cask name.** A cask and a formula cannot share the name `pux` in one tap,
+  so the app ships as cask `pux-bar`.
