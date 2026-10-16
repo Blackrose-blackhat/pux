@@ -14,7 +14,8 @@ struct PanelView: View {
         let progress = min(1, max(0, model.openProgress))
         VStack(alignment: .leading, spacing: 6) {
             if case .running = state.engine, !state.repos.isEmpty {
-                TabStrip(repos: state.repos, selected: repo?.path) { model.dispatch(.tabSelected($0)) }
+                TabStrip(repos: state.repos, selected: repo?.path,
+                         onSelect: { model.dispatch(.tabSelected($0)) }, onAdd: model.addRepository)
                     .layoutPriority(1)
             }
             content(state, repo)
@@ -32,6 +33,7 @@ struct PanelView: View {
     private func content(_ state: AppState, _ repo: RepoState?) -> some View {
         if state.showingSettings {
             SettingsView(prefs: model.prefs, selectedRepo: repo,
+                         onAddRepo: model.addRepository,
                          onRemoveRepo: { if let repo { model.removeRepo(repo: repo) } },
                          onQuit: model.quit)
         } else {
@@ -51,10 +53,25 @@ struct PanelView: View {
                               onEditor: { model.openEditor(repo: repo) })
                         .layoutPriority(1)
                 } else {
-                    placeholder("No repos yet — run `pux watch` in a repository to add it.")
+                    emptyState
                 }
             }
         }
+    }
+
+    /// No repos watched yet: a button to add one, and the CLI way.
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No repositories yet.")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.white.opacity(0.75))
+            Button("Add a repository…", action: model.addRepository)
+                .buttonStyle(PillButtonStyle(primary: true))
+            Text("or run `pux watch` inside one")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.white.opacity(0.4))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func placeholder(_ text: LocalizedStringKey) -> some View {
@@ -65,7 +82,8 @@ struct PanelView: View {
     }
 
     private func footer(_ state: AppState, _ repo: RepoState?) -> some View {
-        let status = Self.status(state, repo)
+        let added = model.addRepoMessage.map { (text: $0, failed: model.addRepoFailed) }
+        let status = Self.status(state, repo, added: added)
         return HStack(spacing: 6) {
             Text(status.text)
                 .font(.system(size: 10))
@@ -87,10 +105,13 @@ struct PanelView: View {
         .frame(height: 18)
     }
 
-    /// The footer line: fix progress, then re-run progress, then the repo's last error, then
-    /// "N repos watched" (while the engine runs) and the engine version.
-    static func status(_ state: AppState, _ repo: RepoState?) -> (text: String, color: Color) {
+    /// The footer line: the result of adding a repo (for a few seconds after), then fix
+    /// progress, then re-run progress, then the repo's last error, then "N repos watched" (while
+    /// the engine runs) and the engine version.
+    static func status(_ state: AppState, _ repo: RepoState?,
+                       added: (text: String, failed: Bool)? = nil) -> (text: String, color: Color) {
         let dim = Color.white.opacity(0.4)
+        if let added { return (added.text, added.failed ? Palette.red : Color.white.opacity(0.75)) }
         if let repo, case .running = state.engine, !state.showingSettings {
             if case .running = repo.fix, let line = ActionRow.fixLine(repo.fix) { return (line, Palette.amber) }
             if repo.rerun == .running { return ("Re-running…", Palette.amber) }

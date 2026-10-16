@@ -18,6 +18,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var openProgress: CGFloat = 0
     @Published private(set) var reduceMotion: Bool
     @Published var layout: NotchLayout
+    /// The result of the last add (picker or debug flag) for the footer; cleared after
+    /// `addRepoMessageDuration`. `addRepoFailed` picks its colour.
+    @Published private(set) var addRepoMessage: String?
+    @Published private(set) var addRepoFailed = false
     let engine: EngineSupervisor
     let prefs = Preferences()
     /// Posts a notification for each failure the engine reports; set by the app delegate.
@@ -28,6 +32,7 @@ final class AppModel: ObservableObject {
 
     private var pointerInside = false
     private var hoverLeaveTimer: DispatchWorkItem?
+    private var addRepoMessageTimer: DispatchWorkItem?
     private var displayOptionsObserver: NSObjectProtocol?
 
     init(layout: NotchLayout, locate: @escaping () -> URL? = EngineSupervisor.locatePux) {
@@ -50,6 +55,8 @@ final class AppModel: ObservableObject {
         displayOptionsObserver = nil
         hoverLeaveTimer?.cancel()
         hoverLeaveTimer = nil
+        addRepoMessageTimer?.cancel()
+        addRepoMessageTimer = nil
         onPanelChange = nil
     }
 
@@ -151,6 +158,97 @@ final class AppModel: ObservableObject {
     func openFromNotification(repo path: String) {
         dispatch(.tabSelected(path))
         if state.panel != .pinned { dispatch(.notchClicked) }
+    }
+
+    // MARK: - Adding repositories
+
+    static let addRepoMessageDuration: TimeInterval = 6
+
+    /// Opens a folder picker (non-modal, so the notch keeps drawing) and adds each chosen folder.
+    /// Pins the panel first so it doesn't retract under the picker.
+    func addRepository() {
+        if state.panel != .pinned { dispatch(.notchClicked) }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Watch"
+        panel.message = "Choose a repository to watch"
+        panel.begin { [weak self, panel] response in
+            guard response == .OK else { return }
+            let urls = panel.urls
+            MainActor.assumeIsolated { self?.addRepositories(urls) }
+        }
+        // An accessory app isn't active on its own; without this the picker opens behind other windows.
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// Adds each in turn, in order (each footer message replaces the last).
+    func addRepositories(_ urls: [URL]) {
+        Task {
+            for url in urls { await addRepository(at: url) }
+        }
+    }
+
+    /// Adds the repository containing `url` (its root, so a subfolder registers the repo) to the
+    /// engine's watch list. The engine sees the file change and adds the tab; the footer says how it went.
+    func addRepository(at url: URL) async {
+        let name = url.lastPathComponent
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            showAddRepo("\(name) is not a folder", failed: true)
+            return
+        }
+        switch await RepoProbe.probe(url.path) {
+        case .notGit:
+            showAddRepo("\(name) is not a Git repository", failed: true)
+        case .noGitHubRemote:
+            showAddRepo("\(name) has no GitHub remote", failed: true)
+        case let .ok(root, repository):
+            let label = repository ?? URL(fileURLWithPath: root).lastPathComponent
+            let file = Registry.configURL()
+            do {
+                try Self.addWatched(root: root, repository: repository, file: file)
+                showAddRepo("Watching \(label)", failed: false)
+            } catch RegistryError.alreadyWatched {
+                showAddRepo("Already watching \(label)", failed: false)
+            } catch {
+                Self.logger.error("could not update \(file.path, privacy: .public): \(String(describing: error), privacy: .public)")
+                let shown = (file.path as NSString).abbreviatingWithTildeInPath
+                showAddRepo("Could not update \(shown): \(error.localizedDescription)", failed: true)
+            }
+        }
+    }
+
+    /// Reads config.json (missing is empty), adds the entry, writes it back atomically. Writes go
+    /// through a symlinked config.json to its target, as the engine's `writeFile` does.
+    private static func addWatched(root: String, repository: String?, file: URL) throws {
+        let target = file.resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let existing: String
+        if FileManager.default.fileExists(atPath: target.path) {
+            // Only a missing file counts as empty: an unreadable one must not be overwritten.
+            existing = String(decoding: try Data(contentsOf: target), as: UTF8.self)
+        } else {
+            existing = ""
+        }
+        let text = try Registry.adding(path: root, repository: repository, now: Date(), to: existing)
+        try Data(text.utf8).write(to: target, options: .atomic)
+    }
+
+    private func showAddRepo(_ message: String, failed: Bool) {
+        addRepoMessage = message
+        addRepoFailed = failed
+        addRepoMessageTimer?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.addRepoMessage = nil
+                self?.addRepoMessageTimer = nil
+            }
+        }
+        addRepoMessageTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.addRepoMessageDuration, execute: work)
     }
 
     private static func copy(_ text: String) {
