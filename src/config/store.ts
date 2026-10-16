@@ -18,12 +18,21 @@ export type UpdateAttempt = {
   startedAt: string;
 };
 
+/** A repository checkout the notch bar watches, keyed by its absolute path in `PuxConfig.watched`. */
+export type WatchedRepo = {
+  /** `owner/name` when the checkout has a GitHub remote, else null. */
+  repository: string | null;
+  addedAt: string;
+};
+
 export type PuxConfig = {
   repos: Record<string, RepoDecision>;
   updateCheck?: UpdateCheck;
   /** Set to false to keep the update notice but never install anything. */
   autoUpdate?: boolean;
   updateAttempt?: UpdateAttempt;
+  /** Checkouts the notch bar watches, keyed by absolute path. */
+  watched?: Record<string, WatchedRepo>;
 };
 
 const defaults: PuxConfig = { repos: {} };
@@ -57,4 +66,24 @@ export async function setRepoDecision(repository: string, agentFiles: boolean): 
   const config = await loadConfig();
   config.repos[repository] = { agentFiles };
   await saveConfig(config);
+}
+
+/** Starts watching a checkout; a repeat call keeps the original `addedAt`. */
+export async function addWatchedRepo(path: string, repository: string | null, now: Date = new Date()): Promise<void> {
+  const config = await loadConfig();
+  const watched = config.watched ?? {};
+  watched[path] = { repository, addedAt: watched[path]?.addedAt ?? now.toISOString() };
+  config.watched = watched;
+  await saveConfig(config);
+}
+
+export async function removeWatchedRepo(path: string): Promise<void> {
+  const config = await loadConfig();
+  if (!config.watched) return;
+  delete config.watched[path];
+  await saveConfig(config);
+}
+
+export async function listWatchedRepos(): Promise<Record<string, WatchedRepo>> {
+  return (await loadConfig()).watched ?? {};
 }
