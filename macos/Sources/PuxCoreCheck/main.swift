@@ -110,4 +110,180 @@ check("plain display: centred 160x30 pill") {
   try expectEqual(l.windowFrame.size, CGSize(width: 360, height: 270))
 }
 
+// MARK: - Reducer
+
+let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+func apply(_ actions: [AppAction], from start: AppState = .initial, now: Date = t0) -> AppState {
+  var state = start
+  for action in actions { state = reduce(state, action, now: now) }
+  return state
+}
+
+func pipe(_ id: String, _ status: PipelineStatus) -> Pipeline {
+  Pipeline(provider: "github-actions", id: id, name: "CI", status: status, actor: nil, url: nil, commit: "abc", commitSha: nil, startedAt: nil, steps: nil)
+}
+
+func stateEvent(_ repo: String, _ repository: String?, _ statuses: [PipelineStatus]) -> AppAction {
+  let pipelines = statuses.enumerated().map { pipe(String($0.offset + 1), $0.element) }
+  return .engineEvent(.state(repo: repo, repository: repository, branch: "main", commit: "abc",
+                             providers: [ProviderSummary(provider: "GitHub Actions", snapshot: .active(pipelines)),
+                                         ProviderSummary(provider: "Vercel", snapshot: .waiting)]))
+}
+
+func failureEvent(_ repo: String) -> AppAction {
+  .engineEvent(.failure(repo: repo, pipeline: pipe("1", .failed), contextPath: repo + "/.ai-context/failure.md", errorWindow: "boom", failedStep: "test", exitCode: 1))
+}
+
+func reposEvent(_ repos: [(String, String?)]) -> AppAction {
+  .engineEvent(.repos(repos.map { RepoSummary(repo: $0.0, repository: $0.1, addedAt: "2026-10-16T10:00:00.000Z") }))
+}
+
+check("failed repo sorts first and is auto-selected") {
+  let s = apply([reposEvent([("/a", "u/a"), ("/b", "u/b")]), stateEvent("/a", "u/a", [.completed]), stateEvent("/b", "u/b", [.failed]), failureEvent("/b")])
+  try expectEqual(s.repos.map(\.path), ["/b", "/a"])
+  try expectEqual(s.repos[0].worst, .failed)
+  try expect(s.repos[0].failure != nil, "failure recorded")
+  try expectEqual(s.selectedRepo, "/b")
+  try expectEqual(s.panel, .autoDropped(until: t0 + 5))
+  try expectEqual(s.mood, .failed)
+}
+
+check("a failure while pinned does not steal selection or unpin") {
+  let pinned = apply([reposEvent([("/a", "u/a"), ("/b", "u/b")]), stateEvent("/a", "u/a", [.completed]), stateEvent("/b", "u/b", [.completed]),
+                      .tabSelected("/a"), .notchClicked])
+  try expectEqual(pinned.panel, .pinned)
+  let s = apply([stateEvent("/b", "u/b", [.failed]), failureEvent("/b")], from: pinned)
+  try expectEqual(s.panel, .pinned)
+  try expectEqual(s.selectedRepo, "/a")
+  try expectEqual(s.repos.map(\.path), ["/b", "/a"])
+  try expect(s.repos[0].failure != nil, "failure still recorded on /b")
+  try expectEqual(s.mood, .failed)
+}
+
+check("passed glow lasts five seconds then idle") {
+  let s = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed]), failureEvent("/a"), stateEvent("/a", "u/a", [.completed])])
+  try expectEqual(s.mood, .passed)
+  try expectEqual(s.repos[0].failure, nil)
+  try expectEqual(s.repos[0].fix, .idle)
+  try expectEqual(s.repos[0].rerun, .idle)
+  try expectEqual(s.passedUntil, t0 + 5)
+  let during = apply([.tick(t0 + 4)], from: s)
+  try expectEqual(during.mood, .passed)
+  let after = apply([.tick(t0 + 6)], from: s)
+  try expectEqual(after.mood, .idle)
+  try expectEqual(after.passedUntil, nil)
+}
+
+check("hover peeks, leave collapses, click pins, escape unpins") {
+  var s = apply([.hoverEntered])
+  try expectEqual(s.panel, .peeking)
+  s = apply([.hoverLeft], from: s)
+  try expectEqual(s.panel, .collapsed)
+  s = apply([.hoverEntered, .notchClicked], from: s)
+  try expectEqual(s.panel, .pinned)
+  s = apply([.hoverLeft, .hoverEntered], from: s)
+  try expectEqual(s.panel, .pinned)
+  s = apply([.toggleSettings], from: s)
+  try expect(s.showingSettings, "settings shown")
+  s = apply([.escapePressed], from: s)
+  try expectEqual(s.panel, .collapsed)
+  try expect(!s.showingSettings, "escape hides settings")
+  s = apply([.notchClicked], from: s)
+  try expectEqual(s.panel, .pinned)
+  s = apply([.notchClicked], from: s)
+  try expectEqual(s.panel, .collapsed)
+  s = apply([.notchClicked, .toggleSettings, .clickedOutside], from: s)
+  try expectEqual(s.panel, .collapsed)
+  try expect(!s.showingSettings, "click outside hides settings")
+}
+
+check("tick expires auto-drop") {
+  let dropped = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed]), failureEvent("/a")])
+  try expectEqual(dropped.panel, .autoDropped(until: t0 + 5))
+  try expectEqual(apply([.tick(t0 + 4.9)], from: dropped).panel, .autoDropped(until: t0 + 5))
+  try expectEqual(apply([.tick(t0 + 5.1)], from: dropped).panel, .collapsed)
+  // Hovering the dropped panel keeps it open past the timer; clicking it pins it.
+  try expectEqual(apply([.hoverEntered, .tick(t0 + 5.1)], from: dropped).panel, .peeking)
+  try expectEqual(apply([.notchClicked, .tick(t0 + 5.1)], from: dropped).panel, .pinned)
+}
+
+check("three fast engine exits go offline with the stderr line") {
+  let tail = "error: unknown command 'serve'"
+  var s = apply([.engineStarted])
+  try expectEqual(s.engine, .running(version: ""))
+  s = apply([.engineEvent(.hello(version: "0.1.5"))], from: s)
+  try expectEqual(s.engine, .running(version: "0.1.5"))
+  s = apply([.engineExited(code: 1, stderrTail: tail, restartsInLastMinute: 1)], from: s)
+  try expectEqual(s.engine, .starting)
+  s = apply([.engineStarted, .engineExited(code: 1, stderrTail: tail, restartsInLastMinute: 2)], from: s)
+  try expectEqual(s.engine, .starting)
+  s = apply([.engineStarted, .engineExited(code: 1, stderrTail: tail, restartsInLastMinute: 3)], from: s)
+  try expectEqual(s.engine, .offline(reason: tail))
+  try expectEqual(apply([.engineMissing]).engine, .missing)
+}
+
+check("repos event removes vanished repos and keeps order stable") {
+  var s = apply([reposEvent([("/c", "u/c"), ("/a", "u/a"), ("/b", "u/b")])])
+  try expectEqual(s.repos.map(\.path), ["/a", "/b", "/c"])
+  try expectEqual(s.selectedRepo, "/a")
+  s = apply([stateEvent("/a", "u/a", [.completed]), stateEvent("/c", "u/c", [.completed]), .tabSelected("/b"), .tabSelected("/nope")], from: s)
+  try expectEqual(s.selectedRepo, "/b")
+  s = apply([reposEvent([("/c", "u/c"), ("/a", "u/a")])], from: s)
+  try expectEqual(s.repos.map(\.path), ["/a", "/c"])
+  try expectEqual(s.selectedRepo, "/a")
+  try expectEqual(s.repos[0].worst, .completed)
+  try expectEqual(s.repos[0].branch, "main")
+  // The same list again changes nothing.
+  try expectEqual(apply([reposEvent([("/a", "u/a"), ("/c", "u/c")])], from: s), s)
+  // Ties on tier fall back to repository, then path.
+  let t = apply([reposEvent([("/z", nil), ("/y", "u/a"), ("/x", "u/a")])])
+  try expectEqual(t.repos.map(\.path), ["/z", "/x", "/y"])
+  try expectEqual(apply([reposEvent([])], from: s).selectedRepo, nil)
+}
+
+check("rerun that passes clears failure so Fix is unavailable") {
+  var s = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed]), failureEvent("/a"), .rerunRequested(repo: "/a")])
+  try expectEqual(s.repos[0].rerun, .running)
+  s = apply([.engineEvent(.rerunDone(repo: "/a", pipelineId: "1", ok: true))], from: s)
+  try expectEqual(s.repos[0].rerun, .done(ok: true))
+  try expect(s.repos[0].failure != nil, "rerun-done alone keeps the failure")
+  s = apply([stateEvent("/a", "u/a", [.completed])], from: s)
+  try expectEqual(s.repos[0].failure, nil)
+  try expectEqual(s.mood, .passed)
+  // Through building: the running pipeline clears the failure, the pass then glows.
+  let b = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed]), failureEvent("/a"),
+                 .engineEvent(.rerunDone(repo: "/a", pipelineId: "1", ok: true)), stateEvent("/a", "u/a", [.building])])
+  try expectEqual(b.repos[0].failure, nil)
+  try expectEqual(b.passedUntil, nil)
+  try expectEqual(b.mood, .watching)
+}
+
+check("engine errors, consent and fix progress land on their repo") {
+  let plan = AgentPlan(entries: [AgentPlanEntry(agent: "Claude Code", path: "CLAUDE.md", action: "append")])
+  var s = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed, .queued, .completed]), failureEvent("/a")])
+  try expectEqual(s.repos[0].worst, .failed)
+  s = apply([.engineEvent(.consentNeeded(repo: "/a", repository: "u/a", plan: plan)), stateEvent("/a", "u/a", [.failed])], from: s)
+  try expectEqual(s.repos[0].consent, plan)
+  s = apply([.consentAnswered(repo: "/a")], from: s)
+  try expectEqual(s.repos[0].consent, nil)
+  s = apply([.engineEvent(.fixProgress(repo: "/a", stage: "agent", agent: "Claude Code"))], from: s)
+  try expectEqual(s.repos[0].fix, .running(stage: "agent", agent: "Claude Code"))
+  s = apply([.engineEvent(.fixDone(repo: "/a", result: .noChanges(explanation: nil, agentLabel: "Claude Code")))], from: s)
+  try expectEqual(s.repos[0].fix, .done(.noChanges(explanation: nil, agentLabel: "Claude Code")))
+  s = apply([.engineEvent(.error(repo: "/a", message: "bad")), .engineEvent(.error(repo: "/nope", message: "x"))], from: s)
+  try expectEqual(s.repos[0].lastError, "bad")
+  try expectEqual(s.repos.count, 1)
+  let running = apply([.engineEvent(.hello(version: "1")), .engineEvent(.error(repo: nil, message: "boom"))])
+  try expectEqual(running.engine, .running(version: "1"))
+  try expectEqual(apply([.engineEvent(.error(repo: nil, message: "boom"))]).engine, .offline(reason: "boom"))
+  // Watching while a pipeline runs; no pipelines at all is idle with a nil worst.
+  let w = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.completed, .queued])])
+  try expectEqual(w.repos[0].worst, .queued)
+  try expectEqual(w.mood, .watching)
+  let none = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [])])
+  try expectEqual(none.repos[0].worst, nil)
+  try expectEqual(none.mood, .idle)
+}
+
 finish()
