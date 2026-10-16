@@ -259,6 +259,21 @@ check("rerun that passes clears failure so Fix is unavailable") {
   try expectEqual(b.mood, .watching)
 }
 
+check("rerun that passes after building still glows green") {
+  var s = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed]), failureEvent("/a"),
+                 .engineEvent(.rerunDone(repo: "/a", pipelineId: "1", ok: true)), stateEvent("/a", "u/a", [.building])])
+  try expectEqual(s.repos[0].failure, nil)
+  try expectEqual(s.mood, .watching)
+  s = apply([stateEvent("/a", "u/a", [.completed])], from: s)
+  try expectEqual(s.mood, .passed)
+  try expectEqual(s.passedUntil, t0 + 5)
+  try expectEqual(s.repos[0].rerun, .idle)
+  try expectEqual(s.repos[0].fix, .idle)
+  try expectEqual(apply([.tick(t0 + 6)], from: s).mood, .idle)
+  // A completed state after the glow has been used up does not glow again.
+  try expectEqual(apply([.tick(t0 + 6), stateEvent("/a", "u/a", [.completed])], from: s).mood, .idle)
+}
+
 check("engine errors, consent and fix progress land on their repo") {
   let plan = AgentPlan(entries: [AgentPlanEntry(agent: "Claude Code", path: "CLAUDE.md", action: "append")])
   var s = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed, .queued, .completed]), failureEvent("/a")])

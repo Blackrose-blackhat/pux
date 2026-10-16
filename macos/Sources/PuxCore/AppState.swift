@@ -70,10 +70,14 @@ public struct RepoState: Equatable, Identifiable, Sendable {
     /// Worst status across every active provider's pipelines: failed > building > queued >
     /// completed > cancelled; nil when there are no pipelines. Kept in step with `providers` by `reduce`.
     public var worst: PipelineStatus?
+    /// A failure was cleared because its pipeline is running again; the next completed state
+    /// still earns the passed glow.
+    public var recovering: Bool
 
     public init(path: String, repository: String? = nil, branch: String? = nil, commit: String? = nil,
                 providers: [ProviderSummary] = [], failure: RepoFailure? = nil, consent: AgentPlan? = nil,
-                fix: FixStatus = .idle, rerun: RerunStatus = .idle, lastError: String? = nil, worst: PipelineStatus? = nil) {
+                fix: FixStatus = .idle, rerun: RerunStatus = .idle, lastError: String? = nil, worst: PipelineStatus? = nil,
+                recovering: Bool = false) {
         self.path = path
         self.repository = repository
         self.branch = branch
@@ -85,6 +89,7 @@ public struct RepoState: Equatable, Identifiable, Sendable {
         self.rerun = rerun
         self.lastError = lastError
         self.worst = worst
+        self.recovering = recovering
     }
 }
 

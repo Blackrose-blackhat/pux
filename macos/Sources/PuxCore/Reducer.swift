@@ -81,16 +81,21 @@ private func reduceEvent(_ s: inout AppState, _ event: ServeEvent, now: Date) {
             repo.commit = commit
             repo.providers = providers
             repo.worst = worst(of: providers)
-            guard repo.failure != nil else { return }
             switch repo.worst {
-            case .completed:
+            case .completed where repo.failure != nil || repo.recovering:
                 repo.failure = nil
+                repo.recovering = false
                 repo.fix = .idle
                 repo.rerun = .idle
                 passed = true
-            case .building, .queued:
+            case .building where repo.failure != nil, .queued where repo.failure != nil:
+                // The pipeline is running again: the failure is stale, but a pass still glows.
                 repo.failure = nil
-            case .failed, .cancelled, nil:
+                repo.recovering = true
+            case .failed:
+                // Failed again; the `failure` event that follows takes over.
+                repo.recovering = false
+            default:
                 break
             }
         }
@@ -102,6 +107,7 @@ private func reduceEvent(_ s: inout AppState, _ event: ServeEvent, now: Date) {
             repo.failure = RepoFailure(pipeline: pipeline, contextPath: contextPath, errorWindow: errorWindow, failedStep: failedStep, exitCode: exitCode)
             repo.fix = .idle
             repo.rerun = .idle
+            repo.recovering = false
         }
         sortRepos(&s)
         if s.panel != .pinned {
