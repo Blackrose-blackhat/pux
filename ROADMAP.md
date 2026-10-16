@@ -78,16 +78,19 @@ Make every AI tool aware of the failure.
 
 ---
 
-## Phase 8 — Menu Bar App
+## Phase 8 — Notch Bar (native Swift)
 
 The real UI. The CLI was just the engine prototype.
 
-- [ ] Tauri + React shell
-- [ ] macOS menu bar tray icon
-- [ ] State icons: idle, watching, success, failure
-- [ ] Click → popover with failure summary
-- [ ] Actions: Open GitHub, Copy Context, Explain, Open Cursor
-- [ ] Notifications on failure (never on success by default)
+- [x] Native SwiftUI notch bar (no Tauri)
+- [x] Liquid drop-down panel
+- [x] Collapsed states: idle, watching, passed, failed
+- [x] Repo tabs with failure summary
+- [x] Actions: Fix, Re-run, Copy context, Open GitHub, Open editor
+- [x] Notification Center banner on failure (never on success)
+- [x] `pux serve` headless engine + `pux watch` registration
+- [ ] Developer ID signing and notarization
+- [ ] Multiple displays
 
 ---
 

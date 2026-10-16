@@ -125,9 +125,25 @@ brew tap Blackrose-blackhat/pux https://github.com/Blackrose-blackhat/pux
 brew install pux
 ```
 
-**Requirements:** Node.js 22+ and the [GitHub CLI](https://cli.github.com/) (`gh`) authenticated. The CLI runs on macOS, Linux, and Windows; the menu bar app will be macOS first. [Vercel CLI](https://vercel.com/docs/cli) is optional and enables deployment watching.
+**Requirements:** Node.js 22+ and the [GitHub CLI](https://cli.github.com/) (`gh`) authenticated. The CLI runs on macOS, Linux, and Windows; the notch bar app is macOS 14+ only. [Vercel CLI](https://vercel.com/docs/cli) is optional and enables deployment watching.
 
-> The menu bar app is coming. For now, the engine runs as a CLI.
+The notch bar app is available for macOS 14+; the engine still runs as a CLI everywhere else.
+
+### Menu bar app (macOS)
+
+The notch bar shows your CI status in the MacBook notch. Install it with the cask (it depends on the `pux` formula):
+
+```sh
+brew install --cask Blackrose-blackhat/pux/pux-bar
+```
+
+The app is ad-hoc signed, so the first launch needs right-click → Open, or clear the quarantine flag:
+
+```sh
+xattr -d com.apple.quarantine /Applications/Pux.app
+```
+
+Running `pux watch` in a repository registers it with the bar and launches the app if it's installed. While both the TUI and the bar are running, they each poll CI, so the same repository is polled twice.
 
 ---
 

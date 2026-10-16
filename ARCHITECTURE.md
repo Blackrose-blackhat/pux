@@ -4,7 +4,7 @@
 
 The engine is the product. The UI is just a surface.
 
-The engine can run headless (CLI), in a TUI (Ink), or inside a native app (Tauri). The core logic never depends on how it's displayed.
+The engine can run headless (CLI), in a TUI (Ink), or inside a native macOS app. The core logic never depends on how it's displayed.
 
 ---
 
@@ -15,8 +15,8 @@ The engine can run headless (CLI), in a TUI (Ink), or inside a native app (Tauri
 │                        UI Layer                          │
 │                                                          │
 │   ┌─────────┐   ┌──────────────┐   ┌───────────────┐   │
-│   │   CLI   │   │   TUI (Ink)  │   │  Menu Bar     │   │
-│   │  doctor │   │   WatchApp   │   │  (Tauri)      │   │
+│   │   CLI   │   │   TUI (Ink)  │   │  Notch Bar    │   │
+│   │  doctor │   │   WatchApp   │   │  (Swift)      │   │
 │   └────┬────┘   └──────┬───────┘   └───────┬───────┘   │
 │        │               │                    │           │
 └────────┼───────────────┼────────────────────┼───────────┘
@@ -175,11 +175,6 @@ pux/
 
 ---
 
-## Future: Tauri Migration
+## Notch Bar (macOS)
 
-The engine layer (`providers/`, `context/`, `agents/`, `config/`) is pure Node.js with no UI dependencies. When the Tauri menu bar app is built:
-
-1. Engine runs as a Tauri sidecar or embedded Node process
-2. Tauri frontend (React) subscribes to engine events
-3. The same `Pipeline` type drives both TUI and native UI
-4. CLI remains available as a lightweight alternative
+The notch bar is a native Swift app under `macos/`. It does not embed the engine: it spawns `pux serve`, a headless engine, and talks to it with JSON lines over stdio. `pux serve` runs one worker per watched repository, and `pux watch` registers a repository with the bar. The same `Pipeline` type drives the TUI and the bar, and the CLI remains available as a lightweight alternative.
