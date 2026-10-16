@@ -94,10 +94,10 @@ final class NotchWindow: NSPanel {
 
     // MARK: - Hit regions (screen coordinates)
 
-    /// The notch widened by `hoverPadding` on each side, plus a point above it so the pointer
-    /// pressed against the screen edge counts.
+    /// The collapsed shape (notch and ears) widened by `hoverPadding` on each side, plus a point
+    /// above it so the pointer pressed against the screen edge counts. Hover and notch clicks use it.
     var notchHitRect: CGRect {
-        let n = layout.notchRect
+        let n = layout.collapsedRect
         let pad = NotchGeometry.hoverPadding
         return CGRect(x: n.minX - pad, y: n.minY, width: n.width + 2 * pad, height: n.height + 1)
     }

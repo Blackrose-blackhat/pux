@@ -128,7 +128,8 @@ struct NotchRootView: View {
         let size = layout.windowFrame.size
         ZStack(alignment: .top) {
             LiquidShapeView(progress: model.openProgress, notchWidth: layout.notchRect.width,
-                            notchHeight: layout.notchRect.height, reduceMotion: model.reduceMotion,
+                            notchHeight: layout.notchRect.height, collapsedWidth: layout.collapsedRect.width,
+                            reduceMotion: model.reduceMotion,
                             panelSize: layout.panelSize)
             content(layout)
                 .frame(width: size.width, height: size.height, alignment: .top)
@@ -137,41 +138,58 @@ struct NotchRootView: View {
         .ignoresSafeArea()
     }
 
-    /// The notch region (cat and mood dot) over the panel region.
+    /// The collapsed region (cat and mood dot) over the panel region.
     @ViewBuilder
     private func content(_ layout: NotchLayout) -> some View {
         VStack(spacing: 0) {
-            NotchGlyphs(mood: model.state.mood)
-                .frame(width: layout.notchRect.width, height: layout.notchRect.height)
+            NotchGlyphs(mood: model.state.mood, earWidth: layout.hasNotch ? NotchGeometry.earWidth : nil)
+                .frame(width: layout.collapsedRect.width, height: layout.collapsedRect.height)
             PanelView(model: model)
         }
     }
 }
 
-/// The cat at the notch's left and the mood dot at its right, 14pt in from each end.
+/// The cat and the mood dot. Beside a hardware notch they are centred in the left and right
+/// ears (`earWidth`), leaving the camera housing empty; on the fallback pill (nil) they sit 14pt
+/// in from its ends.
 private struct NotchGlyphs: View {
     var mood: Mood
+    var earWidth: CGFloat?
 
     static let inset: CGFloat = 14
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                Text(verbatim: "/\\_/\\")   // verbatim: a literal is Markdown, which reads \_ as "_"
-                Text(Self.face(mood))
+            if let earWidth {
+                cat.frame(width: earWidth)
+                Spacer(minLength: 0)
+                dot.frame(width: earWidth)
+            } else {
+                cat
+                Spacer(minLength: 0)
+                dot
             }
-            .font(.system(size: 7, design: .monospaced))
-            .foregroundStyle(Color.white)
-            .fixedSize()
-            Spacer(minLength: 0)
-            Circle()
-                .fill(Palette.color(for: mood))
-                .frame(width: 7, height: 7)
-                .shadow(color: Self.glow(mood), radius: 6)
         }
-        .padding(.horizontal, Self.inset)
+        .padding(.horizontal, earWidth == nil ? Self.inset : 0)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Pux: \(String(describing: mood))"))
+    }
+
+    private var cat: some View {
+        VStack(spacing: 0) {
+            Text(verbatim: "/\\_/\\")   // verbatim: a literal is Markdown, which reads \_ as "_"
+            Text(Self.face(mood))
+        }
+        .font(.system(size: 7, design: .monospaced))
+        .foregroundStyle(Color.white)
+        .fixedSize()
+    }
+
+    private var dot: some View {
+        Circle()
+            .fill(Palette.color(for: mood))
+            .frame(width: 7, height: 7)
+            .shadow(color: Self.glow(mood), radius: 6)
     }
 
     static func face(_ mood: Mood) -> String {

@@ -1,10 +1,10 @@
 import PuxCore
 import SwiftUI
 
-/// The black silhouette that drips out of the notch: the notch itself, a goo neck and the panel
-/// hanging below it, metaball-fused by blurring the layer and thresholding its alpha. At
-/// `progress` 0 it is just the notch rectangle (invisible against a hardware notch); at 1 the
-/// panel is fully dropped. A spring may push `progress` slightly past 1 or below 0.
+/// The black silhouette that drips out of the notch: the collapsed shape (the notch plus its
+/// ears), a goo neck and the panel hanging below it, metaball-fused by blurring the layer and
+/// thresholding its alpha. At `progress` 0 it is just the collapsed shape (`collapsedWidth` wide,
+/// bottom corners rounded); at 1 the panel is fully dropped. A spring may push `progress` slightly past 1 or below 0.
 ///
 /// The view fills its frame; the notch is drawn top-centre, so the frame may be wider and taller
 /// than notch + panel (the window adds a transparent bleed so blur and overshoot aren't clipped).
@@ -12,11 +12,15 @@ struct LiquidShapeView: View, Animatable {
     var progress: CGFloat
     var notchWidth: CGFloat
     var notchHeight: CGFloat
+    /// Width of the collapsed shape: the notch plus both ears (`NotchLayout.collapsedRect`).
+    var collapsedWidth: CGFloat
     var reduceMotion: Bool
     var panelSize: CGSize = NotchGeometry.panelSize
 
     static let blurRadius: CGFloat = 8
     static let cornerRadius: CGFloat = 34
+    /// Bottom corner radius of the collapsed shape.
+    static let collapsedCornerRadius: CGFloat = 14
     /// Radius and x offset from centre of each trailing droplet.
     static let droplets: [(radius: CGFloat, dx: CGFloat)] = [(14, -120), (10, 40), (8, 110)]
 
@@ -33,7 +37,7 @@ struct LiquidShapeView: View, Animatable {
             context.addFilter(.blur(radius: Self.blurRadius))
             context.drawLayer { layer in
                 for path in Self.blobs(progress: progress, notch: CGSize(width: notchWidth, height: notchHeight),
-                                       panel: panelSize, reduceMotion: reduceMotion, centreX: size.width / 2) {
+                                       collapsedWidth: collapsedWidth, panel: panelSize, reduceMotion: reduceMotion, centreX: size.width / 2) {
                     layer.fill(path, with: .color(.black))
                 }
             }
@@ -43,13 +47,17 @@ struct LiquidShapeView: View, Animatable {
     }
 
     /// The unfused shapes for one frame, in view coordinates (origin top-left).
-    static func blobs(progress p: CGFloat, notch: CGSize, panel: CGSize, reduceMotion: Bool, centreX cx: CGFloat) -> [Path] {
-        // The notch, extended above the top edge so the blur doesn't soften the screen edge.
-        var paths = [Path(CGRect(x: cx - notch.width / 2, y: -notch.height, width: notch.width, height: notch.height * 2))]
+    static func blobs(progress p: CGFloat, notch: CGSize, collapsedWidth: CGFloat, panel: CGSize, reduceMotion: Bool,
+                      centreX cx: CGFloat) -> [Path] {
+        // The collapsed shape (notch and ears), extended above the top edge so the blur doesn't
+        // soften the screen edge. The ears sit inside the panel's width, so they fuse into it.
+        let collapsed = CGRect(x: cx - collapsedWidth / 2, y: -notch.height, width: collapsedWidth, height: notch.height * 2)
+        let corners = RectangleCornerRadii(bottomLeading: collapsedCornerRadius, bottomTrailing: collapsedCornerRadius)
+        var paths = [UnevenRoundedRectangle(cornerRadii: corners, style: .continuous).path(in: collapsed)]
         guard p > 0 else { return paths }
 
         // The goo neck straddling the notch's bottom edge, grown in over the first quarter of the
-        // drop so the collapsed shape is exactly the notch.
+        // drop so the collapsed shape is exactly the notch and its ears.
         let neck = min(1, p * 4)
         let neckWidth = notch.width * (1 + 0.3 * neck)
         let neckHeight = 24 * neck

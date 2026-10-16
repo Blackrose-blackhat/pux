@@ -110,6 +110,14 @@ check("plain display: centred 160x30 pill") {
   try expectEqual(l.windowFrame.size, CGSize(width: 360, height: 270))
 }
 
+check("collapsed rect: ears beside a hardware notch, the bare pill otherwise") {
+  let notched = NotchGeometry.layout(for: ScreenMetrics(frame: CGRect(x: 0, y: 0, width: 1512, height: 982), safeAreaTop: 32,
+                        auxiliaryTopLeft: CGRect(x: 0, y: 950, width: 656, height: 32), auxiliaryTopRight: CGRect(x: 856, y: 950, width: 656, height: 32)))
+  try expectEqual(notched.collapsedRect, CGRect(x: 656 - 44, y: 950, width: 200 + 88, height: 32))
+  let plain = NotchGeometry.layout(for: ScreenMetrics(frame: CGRect(x: 0, y: 0, width: 2560, height: 1440), safeAreaTop: 0, auxiliaryTopLeft: nil, auxiliaryTopRight: nil))
+  try expectEqual(plain.collapsedRect, plain.notchRect)
+}
+
 // MARK: - Reducer
 
 let t0 = Date(timeIntervalSince1970: 1_000_000)
