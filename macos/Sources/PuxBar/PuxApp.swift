@@ -17,6 +17,7 @@ struct PuxApp {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: AppModel?
     private var window: NotchWindow?
+    private var notifier: Notifier?
     private var tickTimer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var signalSources: [DispatchSourceSignal] = []
@@ -29,9 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.model = model
         self.window = window
 
-        let hosting = NSHostingView(rootView: NotchRootView(model: model))
+        let hosting = PanelHostingView(rootView: NotchRootView(model: model))
         hosting.sizingOptions = []
         window.embed(hosting)
+
+        let notifier = Notifier(prefs: model.prefs) { [weak model] path in model?.openFromNotification(repo: path) }
+        model.notifier = notifier
+        self.notifier = notifier
 
         window.onPointerInside = { [weak model] inside in model?.pointer(inside: inside) }
         window.onNotchClick = { [weak model] in model?.dispatch(.notchClicked) }
@@ -65,10 +70,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             signalSources.append(source)
         }
 
-        // Debug aid: pin the panel open two seconds after launch, to see the drop without a mouse.
-        if ProcessInfo.processInfo.environment["PUX_DEBUG_DROP"] == "1" {
+        // Debug aids, to see the panel without a mouse: PUX_DEBUG_DROP=1 pins the panel open two
+        // seconds after launch; PUX_DEBUG_SETTINGS=1 switches it to settings a second later.
+        let env = ProcessInfo.processInfo.environment
+        if env["PUX_DEBUG_DROP"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak model] in
                 MainActor.assumeIsolated { model?.dispatch(.notchClicked) }
+            }
+        }
+        if env["PUX_DEBUG_SETTINGS"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak model] in
+                MainActor.assumeIsolated { model?.dispatch(.toggleSettings) }
             }
         }
     }
@@ -125,35 +137,62 @@ struct NotchRootView: View {
         .ignoresSafeArea()
     }
 
-    // Placeholder until the panel arrives (Task 10).
+    /// The notch region (cat and mood dot) over the panel region.
     @ViewBuilder
     private func content(_ layout: NotchLayout) -> some View {
-        let progress = Double(model.openProgress)
         VStack(spacing: 0) {
-            HStack {
-                Spacer(minLength: 0)
-                Circle()
-                    .fill(Self.color(for: model.state.mood))
-                    .frame(width: 6, height: 6)
-                    .padding(.trailing, 14)
+            NotchGlyphs(mood: model.state.mood)
+                .frame(width: layout.notchRect.width, height: layout.notchRect.height)
+            PanelView(model: model)
+        }
+    }
+}
+
+/// The cat at the notch's left and the mood dot at its right, 14pt in from each end.
+private struct NotchGlyphs: View {
+    var mood: Mood
+
+    static let inset: CGFloat = 14
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                Text(verbatim: "/\\_/\\")   // verbatim: a literal is Markdown, which reads \_ as "_"
+                Text(Self.face(mood))
             }
-            .frame(width: layout.notchRect.width, height: layout.notchRect.height)
-            .opacity(1 - min(1, max(0, progress)))
-
-            Text("pux")
-                .font(.caption)
-                .foregroundStyle(.white)
-                .opacity(progress)
-                .padding(.top, 10)
+            .font(.system(size: 7, design: .monospaced))
+            .foregroundStyle(Color.white)
+            .fixedSize()
+            Spacer(minLength: 0)
+            Circle()
+                .fill(Palette.color(for: mood))
+                .frame(width: 7, height: 7)
+                .shadow(color: Self.glow(mood), radius: 6)
         }
+        .padding(.horizontal, Self.inset)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Pux: \(String(describing: mood))"))
     }
 
-    private static func color(for mood: Mood) -> Color {
+    static func face(_ mood: Mood) -> String {
         switch mood {
-        case .idle: return .gray
-        case .watching: return Color(red: 1, green: 0.75, blue: 0.2)
-        case .passed: return .green
-        case .failed: return .red
+        case .idle: return "(-.-)"
+        case .watching: return "(o.o)"
+        case .passed: return "(^.^)"
+        case .failed: return "(;.;)"
         }
     }
+
+    static func glow(_ mood: Mood) -> Color {
+        switch mood {
+        case .failed: return Palette.red
+        case .passed: return Palette.green
+        case .idle, .watching: return .clear
+        }
+    }
+}
+
+/// Hosts the SwiftUI root and takes the first click, since the window is a non-activating panel.
+final class PanelHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

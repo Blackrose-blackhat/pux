@@ -71,6 +71,19 @@ final class NotchWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    /// Key presses nothing in the panel handled end here instead of beeping (Esc is taken
+    /// earlier by the key monitor).
+    override func keyDown(with event: NSEvent) {}
+
+    /// There is no main menu to route ⌘C, so send `copy:` for selected error text directly.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "c" {
+            return NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: self)
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     /// The window sits over the menu bar on purpose; don't let AppKit push it down.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
@@ -81,10 +94,12 @@ final class NotchWindow: NSPanel {
 
     // MARK: - Hit regions (screen coordinates)
 
-    /// The notch, plus a point above it so the pointer pressed against the screen edge counts.
+    /// The notch widened by `hoverPadding` on each side, plus a point above it so the pointer
+    /// pressed against the screen edge counts.
     var notchHitRect: CGRect {
         let n = layout.notchRect
-        return CGRect(x: n.minX, y: n.minY, width: n.width, height: n.height + 1)
+        let pad = NotchGeometry.hoverPadding
+        return CGRect(x: n.minX - pad, y: n.minY, width: n.width + 2 * pad, height: n.height + 1)
     }
 
     /// The fully dropped panel below the notch.
@@ -110,7 +125,7 @@ final class NotchWindow: NSPanel {
 
     func startMonitoring() {
         guard monitors.isEmpty else { return }
-        let moves: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        let moves: NSEvent.EventTypeMask = [.mouseMoved]
         if let m = NSEvent.addGlobalMonitorForEvents(matching: moves, handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshPointer() }
         }) { monitors.append(m) }

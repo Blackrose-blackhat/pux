@@ -342,4 +342,13 @@ check("engine errors, consent and fix progress land on their repo") {
   try expectEqual(none.mood, .idle)
 }
 
+check("describe matches the CLI wording") {
+  try expectEqual(describe(.noChanges(explanation: nil, agentLabel: "Claude Code")), "Claude Code made no changes; no branch was created.")
+  try expectEqual(describe(.fixed(branch: "pux/fix-1", commit: "abc", files: ["a", "b"], explanation: nil, pushed: true, agentLabel: "Codex")),
+                  "pux/fix-1 · 2 files changed by Codex · pushed")
+  try expectEqual(describe(.fixed(branch: "pux/fix-1", commit: "abc", files: ["a"], explanation: nil, pushed: false, agentLabel: "Codex")),
+                  "pux/fix-1 · 1 file changed by Codex")
+  try expectEqual(describe(.error(message: "agent crashed")), "agent crashed")
+}
+
 finish()
