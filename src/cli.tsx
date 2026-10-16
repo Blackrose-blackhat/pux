@@ -82,11 +82,10 @@ program
       process.stdout.write(encodeEvent(event));
     };
     const { providers, repository } = await detectProviders();
-    if (providers.length === 0) emit({ type: "error", repo: path, message: "No CI provider detected" });
-    if (repository === null) emit({ type: "error", repo: path, message: "Not a GitHub repository (gh repo view failed)" });
 
     const worker = createWorker({ root: path, repository, providers, emit });
-    // Started even after an error above, so a later `gh auth login` is picked up on the next tick.
+    // Started even when detection found nothing: each tick then re-detects and reports
+    // providerUnavailableMessage once, so a later `gh auth login` is picked up without a restart.
     worker.start();
 
     const input = createInterface({ input: process.stdin });

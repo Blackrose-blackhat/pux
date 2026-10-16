@@ -7,7 +7,7 @@ import { agentCatalog, type FixResult, type LatestFailure } from "../agents/fix.
 import { loadConfig, setRepoDecision } from "../config/store.js";
 import type { Pipeline, Provider, ProviderSnapshot } from "../providers/index.js";
 import type { ServeEvent } from "./protocol.js";
-import { createWorker, type Worker, type WorkerDeps } from "./worker.js";
+import { createWorker, providerUnavailableMessage, type Worker, type WorkerDeps } from "./worker.js";
 
 const ghLog = `test\tRun npm test\t2026-07-18T10:01:24.000Z > vitest run
 test\tRun npm test\t2026-07-18T10:01:25.100Z FAIL src/math.test.ts > add
@@ -124,6 +124,43 @@ describe("createWorker", () => {
     ])] });
     for (let i = 0; i < 3; i++) await worker.tick();
     expect(events.filter((e) => e.type === "failure")).toHaveLength(1);
+  });
+
+  it("retries a capture whose logs were not ready yet", async () => {
+    const failed = { ...pipeline, status: "failed" as const };
+    let calls = 0;
+    const getLogs = async () => (calls++ === 0 ? null : ghLog);
+    worker = createWorker({ ...deps, providers: [fakeProvider([{ kind: "active", pipelines: [failed] }], { getLogs })] });
+    await worker.tick();
+    await worker.tick();
+    expect(events.filter((e) => e.type === "error")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "failure")).toHaveLength(1);
+    expect(events.findIndex((e) => e.type === "error")).toBeLessThan(events.findIndex((e) => e.type === "failure"));
+  });
+
+  it("gives up capturing after three attempts", async () => {
+    const failed = { ...pipeline, status: "failed" as const };
+    const getLogs = vi.fn(async () => null);
+    worker = createWorker({ ...deps, providers: [fakeProvider([{ kind: "active", pipelines: [failed] }], { getLogs })] });
+    for (let i = 0; i < 4; i++) await worker.tick();
+    const errors = events.filter((e) => e.type === "error");
+    expect(errors).toHaveLength(3);
+    expect((errors[2] as any).message).toContain("after 3 attempts");
+    expect(events.filter((e) => e.type === "failure")).toHaveLength(0);
+    expect(getLogs).toHaveBeenCalledTimes(3);
+  });
+
+  it("re-detects providers each tick until they are available", async () => {
+    const provider = fakeProvider([{ kind: "active", pipelines: [pipeline] }]);
+    let calls = 0;
+    const detect = vi.fn(async () => (calls++ === 0 ? { providers: [], repository: null } : { providers: [provider], repository: "u/r" }));
+    worker = createWorker({ ...deps, repository: null, providers: [], detect });
+    await worker.tick();
+    expect(events).toEqual([{ type: "error", repo: repo.root, message: providerUnavailableMessage }]);
+    await worker.tick();
+    expect(events.slice(1)).toEqual([expect.objectContaining({ type: "state", repository: "u/r", providers: [expect.objectContaining({ provider: "GitHub Actions" })] })]);
+    await worker.tick();
+    expect(detect).toHaveBeenCalledTimes(2);
   });
 
   it("turns a throwing poll into an error event instead of rejecting", async () => {

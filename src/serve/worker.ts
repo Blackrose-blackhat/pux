@@ -10,7 +10,7 @@ import { applyAgentInstructions, planAgentInstructions, type AgentPlan } from ".
 import { loadConfig, setRepoDecision } from "../config/store.js";
 import { generateFailureContext } from "../context/generate.js";
 import { command } from "../github/client.js";
-import type { Pipeline, Provider, ProviderSnapshot } from "../providers/index.js";
+import { detectProviders, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { pollIntervalFor } from "../tui/polling.js";
 import type { ProviderSummary, ServeCommand, ServeEvent } from "./protocol.js";
 
@@ -27,12 +27,18 @@ export type WorkerDeps = {
   generate?: typeof generateFailureContext;
   fix?: { readLatestFailure: typeof readLatestFailure; detectAgents: typeof detectAgents; runFix: typeof runFix };
   intervalFor?: (snapshots: ProviderSnapshot[]) => number;
+  /** Re-run while providers or the repository are unavailable. Default: detectProviders(). */
+  detect?: () => Promise<{ providers: Provider[]; repository: string | null }>;
   setTimeout?: typeof globalThis.setTimeout;
 };
 
 export type Worker = { start(): void; stop(): void; handle(command: ServeCommand): Promise<void>; tick(): Promise<void> };
 
 const errorWindowMaxLines = 40;
+const maxCaptureAttempts = 3;
+
+export const providerUnavailableMessage =
+  "GitHub CLI not installed or not authenticated (run `gh auth login`), or no GitHub remote";
 
 function firstLine(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).split("\n")[0];
@@ -66,7 +72,12 @@ function parseFailureReport(md: string): { errorWindow: string; failedStep: stri
 }
 
 export function createWorker(deps: WorkerDeps): Worker {
-  const { root, repository, providers, emit } = deps;
+  const { root, emit } = deps;
+  let { repository, providers } = deps;
+  const detect = deps.detect ?? (async () => {
+    const detected = await detectProviders();
+    return { providers: detected.providers, repository: detected.repository };
+  });
   const head = deps.head ?? (() => command("git", ["rev-parse", "HEAD"], { cwd: root }));
   const branch = deps.branch ?? (async () => {
     const name = await command("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root });
@@ -88,6 +99,9 @@ export function createWorker(deps: WorkerDeps): Worker {
   let pendingPlan: AgentPlan | null = null;
   /** `provider:id` of failed pipelines already captured; released when that pipeline is seen not failing (re-run). */
   const captured = new Set<string>();
+  /** Failed capture attempts per key; a capture is retried on the next tick until it succeeds or hits the limit. */
+  const attempts = new Map<string, number>();
+  let unavailableReported = false;
 
   const reportError = (error: unknown) => emit({ type: "error", repo: root, message: firstLine(error) });
 
@@ -118,19 +132,51 @@ export function createWorker(deps: WorkerDeps): Worker {
       snapshot.kind === "active" ? snapshot.pipelines.map((pipeline) => ({ provider, pipeline, key: `${pipeline.provider}:${pipeline.id}` })) : [],
     );
     // Only a pipeline seen running again (a re-run) is released; an unavailable or waiting poll releases nothing.
-    for (const { pipeline, key } of seen) if (pipeline.status !== "failed") captured.delete(key);
+    for (const { pipeline, key } of seen) {
+      if (pipeline.status === "failed") continue;
+      captured.delete(key);
+      attempts.delete(key);
+    }
 
     const next = seen.find(({ pipeline, key }) => pipeline.status === "failed" && !captured.has(key));
     if (next) {
       captured.add(next.key);
       try {
         await capture(next.provider, next.pipeline);
+        attempts.delete(next.key);
       } catch (error) {
-        reportError(error);
+        // GitHub's log endpoint can lag a completed run: release the key so the next tick retries.
+        const count = (attempts.get(next.key) ?? 0) + 1;
+        attempts.set(next.key, count);
+        if (count < maxCaptureAttempts) {
+          captured.delete(next.key);
+          reportError(error);
+        } else {
+          reportError(`Could not capture the failure context after ${maxCaptureAttempts} attempts: ${firstLine(error)}`);
+        }
       }
     }
 
     return intervalFor(states.map((s) => s.snapshot));
+  }
+
+  /** True once providers and the repository are known; re-detects (so a later `gh auth login` is picked up) until then. */
+  async function ensureDetected(): Promise<boolean> {
+    if (providers.length > 0 && repository !== null) return true;
+    const detected = await detect();
+    if (detected.providers.length === 0 || detected.repository === null) {
+      if (!unavailableReported) reportError(providerUnavailableMessage);
+      unavailableReported = true;
+      return false;
+    }
+    const firstRepository = repository === null;
+    providers = detected.providers;
+    repository = detected.repository;
+    unavailableReported = false;
+    // Force a fresh `state` for the newly available providers.
+    lastEmitted = null;
+    if (firstRepository && active) void connectAgents().catch(reportError);
+    return true;
   }
 
   async function tick(): Promise<void> {
@@ -138,7 +184,7 @@ export function createWorker(deps: WorkerDeps): Worker {
     polling = true;
     let interval = intervalFor([]);
     try {
-      interval = await poll();
+      if (await ensureDetected()) interval = await poll();
     } catch (error) {
       reportError(error);
     } finally {
