@@ -1,0 +1,35 @@
+name: macOS bar
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Core checks
+        run: swift run PuxCoreCheck
+        working-directory: macos
+
+      - name: Build Pux.app
+        run: bash macos/scripts/build-app.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pux.app
+          path: macos/Pux-*.zip
+          if-no-files-found: error
