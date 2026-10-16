@@ -13,6 +13,10 @@ final class EngineSupervisor {
     private static let restartWindow: TimeInterval = 60
     /// How long to wait after the process exits for its pipes to reach EOF.
     private static let drainGrace: TimeInterval = 0.5
+    /// How long a freshly launched engine has to send `hello` before it is treated as
+    /// incompatible (e.g. pux 0.1.5, whose `serve` is an HTTP server) and terminated.
+    static var helloTimeout: TimeInterval = 10
+    static let helloTimeoutReason = "engine did not say hello within 10s (is pux 0.1.6 or newer installed?)"
 
     private let dispatch: @MainActor (AppAction) -> Void
     private let locate: () -> URL?
@@ -116,6 +120,7 @@ final class EngineSupervisor {
         guard let current = run else { return }
         run = nil
         current.finished = true
+        current.cancelHelloTimer()
         current.stdout.fileHandleForReading.readabilityHandler = nil
         current.stderr.fileHandleForReading.readabilityHandler = nil
         guard current.process.isRunning else { return }
@@ -180,7 +185,28 @@ final class EngineSupervisor {
             current.stdoutEOF = true
             current.stderrEOF = true
             finish(current)
+            return
         }
+        scheduleHelloTimeout(for: current)
+    }
+
+    /// Terminates an engine that never says hello (SIGTERM, then SIGKILL after 1s); the normal
+    /// exit path then reports it with `helloTimeoutReason` as the last stderr line.
+    private func scheduleHelloTimeout(for current: Run) {
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.run === current, !current.finished, !current.saidHello else { return }
+                current.helloTimedOut = true
+                let process = current.process
+                guard process.isRunning else { return }
+                process.terminate()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                }
+            }
+        }
+        current.helloTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.helloTimeout, execute: work)
     }
 
     // MARK: - Pipe handling (main actor; callbacks hop here in order)
@@ -207,15 +233,23 @@ final class EngineSupervisor {
         var line = String(decoding: bytes, as: UTF8.self)
         if line.hasSuffix("\r") { line.removeLast() }
         guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let event: ServeEvent
+        do {
+            event = try ProtocolCodec.decode(line: line)
+        } catch {
+            Self.logger.error("undecodable line from pux serve: \(line, privacy: .public) (\(String(describing: error), privacy: .public))")
+            return
+        }
+        // Started means "speaks the protocol": the first line that decodes, not just any output.
         if !current.started {
             current.started = true
             dispatch(.engineStarted)
         }
-        do {
-            dispatch(.engineEvent(try ProtocolCodec.decode(line: line)))
-        } catch {
-            Self.logger.error("undecodable line from pux serve: \(line, privacy: .public) (\(String(describing: error), privacy: .public))")
+        if case .hello = event {
+            current.saidHello = true
+            current.cancelHelloTimer()
         }
+        dispatch(.engineEvent(event))
     }
 
     private func stderrData(_ data: Data, from current: Run) {
@@ -237,6 +271,7 @@ final class EngineSupervisor {
     private func terminated(_ current: Run, code: Int32) {
         guard !current.finished else { return }
         current.exitCode = code
+        current.cancelHelloTimer()
         if current.stdoutEOF && current.stderrEOF {
             finish(current)
         } else {
@@ -258,7 +293,9 @@ final class EngineSupervisor {
         current.finished = true
         current.stdout.fileHandleForReading.readabilityHandler = nil
         current.stderr.fileHandleForReading.readabilityHandler = nil
+        current.cancelHelloTimer()
         current.flushStderrPartial()
+        if current.helloTimedOut { current.appendStderrLine(Self.helloTimeoutReason) }
         guard run === current else { return }
         run = nil
         guard !stopped else { return }
@@ -299,12 +336,24 @@ private final class Run {
     var stderrEOF = false
     var exitCode: Int32?
     var finished = false
+    var saidHello = false
+    var helloTimedOut = false
+    var helloTimer: DispatchWorkItem?
 
     init(process: Process) { self.process = process }
+
+    func cancelHelloTimer() {
+        helloTimer?.cancel()
+        helloTimer = nil
+    }
 
     func appendStderr(_ bytes: Data) {
         var line = String(decoding: bytes, as: UTF8.self)
         if line.hasSuffix("\r") { line.removeLast() }
+        appendStderrLine(line)
+    }
+
+    func appendStderrLine(_ line: String) {
         guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         stderrLines.append(line)
         if stderrLines.count > Self.tailLines { stderrLines.removeFirst(stderrLines.count - Self.tailLines) }
