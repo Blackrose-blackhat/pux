@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onNotchClick = { [weak model] in model?.dispatch(.notchClicked) }
         window.onEscape = { [weak model] in model?.escapePressed() ?? false }
         window.onClickOutside = { [weak model] in model?.clickedOutside() }
+        window.onDragHover = { [weak model] inside in model?.dragHover(inside) }
+        window.onDrop = { [weak model, weak window] urls in
+            model?.dropped(urls)
+            window?.refreshPointer()   // hover was the drag's; hand it back to the pointer
+        }
         model.onPanelChange = { [weak window] old, new in
             guard let window else { return }
             window.isOpen = new != .collapsed
@@ -71,7 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Debug aids, to see the panel without a mouse: PUX_DEBUG_DROP=1 pins the panel open two
-        // seconds after launch; PUX_DEBUG_SETTINGS=1 switches it to settings a second later.
+        // seconds after launch; PUX_DEBUG_SETTINGS=1 switches it to settings a second later;
+        // PUX_DEBUG_ADD=<path>[:<path>…] runs the add-repository path (as a drop or the picker
+        // would) on each path, the first at four seconds and then three seconds apart.
         let env = ProcessInfo.processInfo.environment
         if env["PUX_DEBUG_DROP"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak model] in
@@ -81,6 +88,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if env["PUX_DEBUG_SETTINGS"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak model] in
                 MainActor.assumeIsolated { model?.dispatch(.toggleSettings) }
+            }
+        }
+        if let paths = env["PUX_DEBUG_ADD"], !paths.isEmpty {
+            for (i, path) in paths.split(separator: ":").enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4 + 3 * Double(i)) { [weak model] in
+                    MainActor.assumeIsolated { model?.addRepositories([URL(fileURLWithPath: String(path))]) }
+                }
             }
         }
     }

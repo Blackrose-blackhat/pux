@@ -1,10 +1,11 @@
 import PuxCore
 import SwiftUI
 
-/// Replaces the repo body while the gear is on: editor, notifications, remove repo, quit.
+/// Replaces the repo body while the gear is on: editor, notifications, add and remove repos, quit.
 struct SettingsView: View {
     @ObservedObject var prefs: Preferences
     var selectedRepo: RepoState?
+    var onAddRepo: () -> Void
     var onRemoveRepo: () -> Void
     var onQuit: () -> Void
 
@@ -31,6 +32,9 @@ struct SettingsView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
             HStack(spacing: 6) {
+                Button("Add…", action: onAddRepo)
+                    .buttonStyle(PillButtonStyle())
+                    .help("Choose a repository to watch")
                 Button(role: .destructive, action: onRemoveRepo) {
                     Text(selectedRepo.map { "Remove \($0.displayName)" } ?? "Remove repo")
                         .foregroundStyle(Palette.red)

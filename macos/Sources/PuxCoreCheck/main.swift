@@ -368,4 +368,184 @@ check("a failure while a fix is running keeps the fix running") {
   try expectEqual(s.repos[0].fix, .idle)
 }
 
+// MARK: - Registry (the `watched` key of ~/.config/pux/config.json)
+
+/// 2026-10-16T10:00:00.000Z plus `ms` milliseconds.
+func registryDate(ms: Double = 0) -> Date {
+  Date(timeIntervalSince1970: 1_792_144_800 + ms / 1000)
+}
+
+func parsedObject(_ text: String) throws -> NSDictionary {
+  guard let object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? NSDictionary else {
+    throw CheckError("not a JSON object: \(text)")
+  }
+  return object
+}
+
+check("registry: adding to {} writes one watched entry, as the engine would") {
+  let text = try Registry.adding(path: "/r", repository: "o/n", now: registryDate(), to: "{}")
+  let watched = try parsedObject(text)["watched"] as? NSDictionary
+  try expectEqual(watched?.count, 1)
+  let entry = watched?["/r"] as? NSDictionary
+  try expectEqual(entry?["repository"] as? String, "o/n")
+  try expectEqual(entry?["addedAt"] as? String, "2026-10-16T10:00:00.000Z")
+  // Byte-for-byte what `addWatchedRepo` (JSON.stringify(config, null, 2) + "\n") writes.
+  try expectEqual(text, #"""
+  {
+    "repos": {},
+    "watched": {
+      "/r": {
+        "repository": "o/n",
+        "addedAt": "2026-10-16T10:00:00.000Z"
+      }
+    }
+  }
+  """# + "\n")
+}
+
+check("registry: a nil repository is null and addedAt keeps milliseconds") {
+  let text = try Registry.adding(path: "/r", repository: nil, now: registryDate(ms: 250), to: "{}")
+  let entry = (try parsedObject(text)["watched"] as? NSDictionary)?["/r"] as? NSDictionary
+  try expect(entry?["repository"] is NSNull, "repository should be null")
+  try expectEqual(entry?["addedAt"] as? String, "2026-10-16T10:00:00.250Z")
+}
+
+check("registry: adding keeps every other key, in order, as the engine writes it") {
+  // Input and expected output generated with node from store.ts's loadConfig / addWatchedRepo /
+  // saveConfig logic (the engine moves `repos` first; new keys go last).
+  let existing = #"""
+  {
+    "updateCheck": {
+      "checkedAt": "2026-10-15T08:00:00.000Z",
+      "latest": "0.1.6"
+    },
+    "repos": {
+      "o/n": {
+        "agentFiles": true
+      }
+    },
+    "autoUpdate": false,
+    "watched": {
+      "/a": {
+        "repository": "o/a",
+        "addedAt": "2026-10-01T00:00:00.000Z"
+      }
+    },
+    "extra": {
+      "s": "tab\there \"q\" \\ é \u0001 /",
+      "n": [
+        1.5,
+        -2,
+        1e+21,
+        null,
+        [],
+        {}
+      ]
+    }
+  }
+  """# + "\n"
+  let expected = #"""
+  {
+    "repos": {
+      "o/n": {
+        "agentFiles": true
+      }
+    },
+    "updateCheck": {
+      "checkedAt": "2026-10-15T08:00:00.000Z",
+      "latest": "0.1.6"
+    },
+    "autoUpdate": false,
+    "watched": {
+      "/a": {
+        "repository": "o/a",
+        "addedAt": "2026-10-01T00:00:00.000Z"
+      },
+      "/b": {
+        "repository": null,
+        "addedAt": "2026-10-16T10:00:00.000Z"
+      }
+    },
+    "extra": {
+      "s": "tab\there \"q\" \\ é \u0001 /",
+      "n": [
+        1.5,
+        -2,
+        1e+21,
+        null,
+        [],
+        {}
+      ]
+    }
+  }
+  """# + "\n"
+  let text = try Registry.adding(path: "/b", repository: nil, now: registryDate(), to: existing)
+  let before = try parsedObject(existing), after = try parsedObject(text)
+  for key in ["repos", "updateCheck", "autoUpdate", "extra"] {
+    try expect((before[key] as? NSObject)?.isEqual(after[key]) == true, "\(key) changed")
+  }
+  try expectEqual(text, expected)
+}
+
+check("registry: unicode escapes are decoded and written as JSON.stringify writes them") {
+  let text = try Registry.adding(path: "/x/é 😀", repository: "o/n", now: registryDate(),
+                                 to: #"{"repos":{},"s":"😀 \/ é"}"#)
+  try expectEqual(text, "{\n  \"repos\": {},\n  \"s\": \"😀 / é\",\n  \"watched\": {\n    \"/x/é 😀\": {\n      \"repository\": \"o/n\",\n      \"addedAt\": \"2026-10-16T10:00:00.000Z\"\n    }\n  }\n}\n")
+}
+
+check("registry: a leading U+FEFF inside a string survives the round trip") {
+  let text = try Registry.adding(path: "/r", repository: "o/n", now: registryDate(),
+                                 to: "{\"repos\": {}, \"s\": \"\u{FEFF}a\"}")
+  // Compared as scalars: String equality and JSONSerialization can both hide a U+FEFF.
+  let expected = "{\n  \"repos\": {},\n  \"s\": \"\u{FEFF}a\",\n  \"watched\": {\n    \"/r\": {\n      \"repository\": \"o/n\",\n      \"addedAt\": \"2026-10-16T10:00:00.000Z\"\n    }\n  }\n}\n"
+  try expectEqual(Array(text.unicodeScalars), Array(expected.unicodeScalars))
+}
+
+check("registry: parsesAsObject is true only for a complete JSON object") {
+  try expect(Registry.parsesAsObject("{}"))
+  try expect(Registry.parsesAsObject(#"{"repos": {}, "watched": {"/r": {"repository": null}}}"#))
+  for text in ["[]", #""x""#, #"{"repos": {"#, "", "  ", "null", "{} x"] {
+    try expect(!Registry.parsesAsObject(text), "\(text) should not parse as an object")
+  }
+}
+
+check("registry: adding a watched path throws alreadyWatched") {
+  let once = try Registry.adding(path: "/r", repository: "o/n", now: registryDate(), to: "{}")
+  do {
+    _ = try Registry.adding(path: "/r", repository: "o/n", now: registryDate(ms: 5000), to: once)
+    throw CheckError("expected alreadyWatched")
+  } catch let error as RegistryError {
+    try expectEqual(error, .alreadyWatched)
+  }
+}
+
+check("registry: empty or invalid JSON is treated as {}") {
+  let fresh = try Registry.adding(path: "/r", repository: "o/n", now: registryDate(), to: "{}")
+  for input in ["", "   ", "{not json", "[1, 2]", "null", #"{"a": 1} trailing"#] {
+    try expectEqual(try Registry.adding(path: "/r", repository: "o/n", now: registryDate(), to: input), fresh)
+  }
+}
+
+check("registry: repositorySlug reads GitHub remotes only") {
+  for remote in ["https://github.com/o/n.git", "https://github.com/o/n", "git@github.com:o/n.git", "ssh://git@github.com/o/n.git"] {
+    try expectEqual(Registry.repositorySlug(fromRemote: remote), "o/n")
+  }
+  try expectEqual(Registry.repositorySlug(fromRemote: "https://github.com/o/n/\n"), "o/n")
+  try expectEqual(Registry.repositorySlug(fromRemote: "https://gitlab.com/o/n.git"), nil)
+  try expectEqual(Registry.repositorySlug(fromRemote: "git@gitlab.com:o/n.git"), nil)
+  try expectEqual(Registry.repositorySlug(fromRemote: "https://github.com/o"), nil)
+  try expectEqual(Registry.repositorySlug(fromRemote: "/local/path/repo.git"), nil)
+}
+
+check("registry: configURL honours PUX_CONFIG_DIR, then XDG_CONFIG_HOME, then ~/.config") {
+  let home = URL(fileURLWithPath: "/Users/me")
+  try expectEqual(Registry.configURL(environment: ["PUX_CONFIG_DIR": "/tmp/p", "XDG_CONFIG_HOME": "/x"], home: home).path,
+                  "/tmp/p/config.json")
+  try expectEqual(Registry.configURL(environment: ["PUX_CONFIG_DIR": "", "XDG_CONFIG_HOME": "/x"], home: home).path,
+                  "/x/pux/config.json")
+  try expectEqual(Registry.configURL(environment: ["XDG_CONFIG_HOME": ""], home: home).path,
+                  "/Users/me/.config/pux/config.json")
+  try expectEqual(Registry.configURL(environment: [:], home: home).path, "/Users/me/.config/pux/config.json")
+}
+
 finish()
