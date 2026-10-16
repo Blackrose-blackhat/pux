@@ -493,6 +493,22 @@ check("registry: unicode escapes are decoded and written as JSON.stringify write
   try expectEqual(text, "{\n  \"repos\": {},\n  \"s\": \"😀 / é\",\n  \"watched\": {\n    \"/x/é 😀\": {\n      \"repository\": \"o/n\",\n      \"addedAt\": \"2026-10-16T10:00:00.000Z\"\n    }\n  }\n}\n")
 }
 
+check("registry: a leading U+FEFF inside a string survives the round trip") {
+  let text = try Registry.adding(path: "/r", repository: "o/n", now: registryDate(),
+                                 to: "{\"repos\": {}, \"s\": \"\u{FEFF}a\"}")
+  // Compared as scalars: String equality and JSONSerialization can both hide a U+FEFF.
+  let expected = "{\n  \"repos\": {},\n  \"s\": \"\u{FEFF}a\",\n  \"watched\": {\n    \"/r\": {\n      \"repository\": \"o/n\",\n      \"addedAt\": \"2026-10-16T10:00:00.000Z\"\n    }\n  }\n}\n"
+  try expectEqual(Array(text.unicodeScalars), Array(expected.unicodeScalars))
+}
+
+check("registry: parsesAsObject is true only for a complete JSON object") {
+  try expect(Registry.parsesAsObject("{}"))
+  try expect(Registry.parsesAsObject(#"{"repos": {}, "watched": {"/r": {"repository": null}}}"#))
+  for text in ["[]", #""x""#, #"{"repos": {"#, "", "  ", "null", "{} x"] {
+    try expect(!Registry.parsesAsObject(text), "\(text) should not parse as an object")
+  }
+}
+
 check("registry: adding a watched path throws alreadyWatched") {
   let once = try Registry.adding(path: "/r", repository: "o/n", now: registryDate(), to: "{}")
   do {

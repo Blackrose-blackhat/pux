@@ -124,10 +124,11 @@ enum OrderedJSON: Equatable {
             try expect(UInt8(ascii: "\""))
             var scalars = String.UnicodeScalarView()
             var run: [UInt8] = []   // unescaped UTF-8 bytes since the last escape
-            func flush() throws {
+            func flush() {
                 guard !run.isEmpty else { return }
-                guard let text = String(bytes: run, encoding: .utf8) else { throw ParseError() }
-                scalars.append(contentsOf: text.unicodeScalars)
+                // `run` holds whole UTF-8 sequences from a Swift String, so decoding can't fail;
+                // unlike String(bytes:encoding:) it keeps a leading U+FEFF.
+                scalars.append(contentsOf: String(decoding: run, as: UTF8.self).unicodeScalars)
                 run.removeAll()
             }
             while true {
@@ -136,10 +137,10 @@ enum OrderedJSON: Equatable {
                 index += 1
                 switch byte {
                 case UInt8(ascii: "\""):
-                    try flush()
+                    flush()
                     return String(scalars)
                 case UInt8(ascii: "\\"):
-                    try flush()
+                    flush()
                     scalars.append(try escape())
                 case 0x00..<0x20:
                     throw ParseError()

@@ -72,6 +72,8 @@ final class AppModel: ObservableObject {
             withAnimation(reduceMotion ? Self.reducedMotionAnimation : Self.openAnimation) { openProgress = open }
         }
         if old.panel != next.panel { onPanelChange?(old.panel, next.panel) }
+        // A missed draggingExited must not leave "Drop to watch" behind a collapsed panel.
+        if next.panel == .collapsed { dropHint = false }
         if case let .engineEvent(.failure(path, _, _, _, _, _)) = action,
            let repo = next.repos.first(where: { $0.path == path }) {
             notifier?.failure(repo: repo)
@@ -211,7 +213,7 @@ final class AppModel: ObservableObject {
             let label = repository ?? URL(fileURLWithPath: root).lastPathComponent
             let file = Registry.configURL()
             do {
-                try Self.addWatched(root: root, repository: repository, file: file)
+                try await Self.addWatched(root: root, repository: repository, file: file)
                 showAddRepo("Watching \(label)", failed: false)
             } catch RegistryError.alreadyWatched {
                 showAddRepo("Already watching \(label)", failed: false)
@@ -225,18 +227,32 @@ final class AppModel: ObservableObject {
 
     /// Reads config.json (missing is empty), adds the entry, writes it back atomically. Writes go
     /// through a symlinked config.json to its target, as the engine's `writeFile` does.
-    private static func addWatched(root: String, repository: String?, file: URL) throws {
+    ///
+    /// An existing file is never replaced unless it parses: one that can't be read, or holds text
+    /// that isn't a JSON object, is an error. The engine's saveConfig truncates then writes, so a
+    /// read can land mid-write; a file that doesn't parse is read once more after 100 ms.
+    private static func addWatched(root: String, repository: String?, file: URL) async throws {
         let target = file.resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let existing: String
-        if FileManager.default.fileExists(atPath: target.path) {
-            // Only a missing file counts as empty: an unreadable one must not be overwritten.
-            existing = String(decoding: try Data(contentsOf: target), as: UTF8.self)
-        } else {
-            existing = ""
+        func read() throws -> String {
+            guard FileManager.default.fileExists(atPath: target.path) else { return "" }
+            return String(decoding: try Data(contentsOf: target), as: UTF8.self)
+        }
+        func usable(_ text: String) -> Bool {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || Registry.parsesAsObject(text)
+        }
+        var existing = try read()
+        if !usable(existing) {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            existing = try read()
+            guard usable(existing) else { throw ConfigNotJSON() }
         }
         let text = try Registry.adding(path: root, repository: repository, now: Date(), to: existing)
         try Data(text.utf8).write(to: target, options: .atomic)
+    }
+
+    private struct ConfigNotJSON: LocalizedError {
+        var errorDescription: String? { "config.json is not valid JSON" }
     }
 
     private func showAddRepo(_ message: String, failed: Bool) {
@@ -264,8 +280,10 @@ final class AppModel: ObservableObject {
     }
 
     /// Files were dropped on the notch: add each one (non-folders are refused with a message).
+    /// Pins the panel so the footer message stays in view after the pointer leaves.
     func dropped(_ urls: [URL]) {
         dropHint = false
+        if state.panel != .pinned { dispatch(.notchClicked) }
         addRepositories(urls)
     }
 

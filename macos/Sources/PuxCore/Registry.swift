@@ -26,6 +26,9 @@ public enum Registry {
     /// The result is what the engine's `loadConfig` + `saveConfig` would write: other keys keep
     /// their order and values, `repos` comes first (created empty if missing), a new `watched`
     /// goes last, 2-space indentation, trailing newline. JSON that isn't an object counts as `{}`.
+    /// A `repos` value that isn't an object is kept as it is (the engine would write `{}` there).
+    /// Callers writing a file should check `parsesAsObject` first rather than replace a file that
+    /// doesn't parse.
     public static func adding(path: String, repository: String?, now: Date, to existing: String) throws -> String {
         var config = (try? OrderedJSON.parse(existing)).flatMap { value -> OrderedJSON? in
             if case .object = value { return value }
@@ -49,6 +52,12 @@ public enum Registry {
         ]))
         config.set("watched", watched)
         return config.stringified() + "\n"
+    }
+
+    /// Whether `text` is a complete JSON object, i.e. what `adding` keeps rather than treating as `{}`.
+    public static func parsesAsObject(_ text: String) -> Bool {
+        guard case .object = try? OrderedJSON.parse(text) else { return false }
+        return true
     }
 
     /// Default config file: $PUX_CONFIG_DIR/config.json, else $XDG_CONFIG_HOME/pux/config.json, else ~/.config/pux/config.json

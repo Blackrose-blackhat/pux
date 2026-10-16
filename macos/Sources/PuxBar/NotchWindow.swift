@@ -173,7 +173,8 @@ final class NotchWindow: NSPanel {
         }) { monitors.append(m) }
 
         if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard event.keyCode == 53 else { return event }   // Esc
+            // Only the notch's own Esc: in the folder picker it must cancel the picker.
+            guard event.keyCode == 53, event.window === self else { return event }   // Esc
             let used = MainActor.assumeIsolated { self?.onEscape?() ?? false }
             return used ? nil : event
         }) { monitors.append(m) }
