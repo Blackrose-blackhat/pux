@@ -2,12 +2,17 @@
 
 import { Command } from "commander";
 import { render } from "ink";
+import { createInterface } from "node:readline";
 import React from "react";
 import { WatchApp } from "./tui/WatchApp.js";
 import { runDoctor } from "./commands/doctor.js";
 import { runFixCommand } from "./commands/fix.js";
 import { autoUpdateLine } from "./utils/auto-update.js";
 import { getCurrentVersion } from "./utils/version-check.js";
+import { detectProviders } from "./providers/index.js";
+import { encodeEvent, parseCommand, type ServeEvent } from "./serve/protocol.js";
+import { createSupervisor, defaultSupervisorDeps } from "./serve/supervisor.js";
+import { createWorker } from "./serve/worker.js";
 
 const program = new Command();
 
@@ -50,6 +55,49 @@ program
     await runDoctor();
     const line = await notice;
     if (line) console.log(`\x1b[2m${line}\x1b[0m`);
+  });
+
+program
+  .command("serve")
+  .description("Run the engine headless for the Pux menu bar app; speaks JSON lines on stdin/stdout.")
+  .action(async () => {
+    const supervisor = createSupervisor(defaultSupervisorDeps(getCurrentVersion()));
+    const input = createInterface({ input: process.stdin });
+    input.on("line", (line) => {
+      void supervisor.handleLine(line).catch(() => undefined);
+    });
+    input.on("close", () => supervisor.stop());
+    await supervisor.start();
+    await supervisor.closed;
+    process.exit(0);
+  });
+
+program
+  .command("serve-worker <path>", { hidden: true })
+  .description("Run the engine for one repository; spawned by `pux serve`.")
+  .action(async (path: string) => {
+    // The engine resolves the repo root from cwd, so this must come before detection.
+    process.chdir(path);
+    const emit = (event: ServeEvent) => {
+      process.stdout.write(encodeEvent(event));
+    };
+    const { providers, repository } = await detectProviders();
+    if (providers.length === 0) emit({ type: "error", repo: path, message: "No CI provider detected" });
+    if (repository === null) emit({ type: "error", repo: path, message: "Not a GitHub repository (gh repo view failed)" });
+
+    const worker = createWorker({ root: path, repository, providers, emit });
+    // Started even after an error above, so a later `gh auth login` is picked up on the next tick.
+    worker.start();
+
+    const input = createInterface({ input: process.stdin });
+    input.on("line", (line) => {
+      const command = parseCommand(line);
+      if (command) void worker.handle(command);
+    });
+    input.on("close", () => {
+      worker.stop();
+      process.exit(0);
+    });
   });
 
 program.parse();
