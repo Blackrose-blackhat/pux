@@ -278,3 +278,7 @@ real failure end to end.
   attempts, before the worker gives up with one `error`.
 - **Cask name.** A cask and a formula cannot share the name `pux` in one tap,
   so the app ships as cask `pux-bar`.
+- **Tap moved out.** The formula and the `pux-bar` cask live in the separate
+  `Blackrose-blackhat/homebrew-pux` repository so the one-line
+  `brew install Blackrose-blackhat/pux/...` forms work; the bump workflow
+  pushes there with a fine-grained token.

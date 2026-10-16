@@ -160,7 +160,7 @@ pux/
 │   ├── tui/                     # Ink UI, polling interval, cat
 │   └── __tests__/               # Integration tests + helpers
 ├── dist/                        # Build output (ESM, Node 22)
-├── Formula/pux.rb               # Homebrew formula, bumped by CI
+├── (Homebrew formula + cask live in Blackrose-blackhat/homebrew-pux, bumped by CI)
 └── scripts/release.mjs          # Interactive version bump + publish
 ```
 
@@ -171,7 +171,7 @@ pux/
 - **Bundler:** tsup (ESM output, Node 22 target)
 - **Type checking:** TypeScript strict mode
 - **Testing:** Vitest. Pure modules are unit-tested; anything that shells out runs against fake `gh`/`vercel` scripts in a temp git repo.
-- **CI:** every push to `main` typechecks, tests, builds, and publishes to npm when the version changed. A follow-up workflow bumps the Homebrew formula.
+- **CI:** every push to `main` typechecks, tests, builds, and publishes to npm when the version changed. A follow-up workflow bumps the formula and cask in the `homebrew-pux` tap (needs the `HOMEBREW_TAP_TOKEN` secret).
 
 ---
 
