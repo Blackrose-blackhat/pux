@@ -1,4 +1,4 @@
-name: Update Homebrew Formula
+name: Update Homebrew tap
 
 on:
   workflow_run:
@@ -8,25 +8,33 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-formula:
+  update-tap:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get version and update formula
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: Blackrose-blackhat/homebrew-pux
+          # Fine-grained PAT with "Contents: read and write" on homebrew-pux only.
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula from the npm tarball
         run: |
           VERSION=$(node -p "require('./package.json').version")
           URL="https://registry.npmjs.org/pux.sh/-/pux.sh-${VERSION}.tgz"
           sleep 30
-          SHA=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)
-          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/pux.rb
-          sed -i "s|sha256 \".*\"|sha256 \"${SHA}\"|" Formula/pux.rb
+          SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
+          sed -i "s|^  url \".*\"|  url \"${URL}\"|" tap/Formula/pux.rb
+          sed -i "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" tap/Formula/pux.rb
 
-      - name: Update cask from release asset
+      - name: Update cask from the release asset
         run: |
           VERSION=$(node -p "require('./package.json').version")
           URL="https://github.com/Blackrose-blackhat/pux/releases/download/v${VERSION}/Pux-${VERSION}.zip"
@@ -36,21 +44,24 @@ jobs:
               FOUND=1
               break
             fi
-            echo "Release asset not available yet (attempt ${i}/10), waiting 30s"
-            sleep 30
+            if [ "$i" -lt 10 ]; then
+              echo "Release asset not available yet (attempt ${i}/10), waiting 30s"
+              sleep 30
+            fi
           done
           if [ "$FOUND" -ne 1 ]; then
-            echo "::warning::Release asset ${URL} never appeared; skipping cask update"
+            echo "::warning::Release asset ${URL} never appeared; skipping cask update (re-run this workflow manually once it exists)"
             exit 0
           fi
           SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
-          sed -i "s|^  version \".*\"|  version \"${VERSION}\"|" Casks/pux-bar.rb
-          sed -i "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" Casks/pux-bar.rb
+          sed -i "s|^  version \".*\"|  version \"${VERSION}\"|" tap/Casks/pux-bar.rb
+          sed -i "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" tap/Casks/pux-bar.rb
 
-      - name: Commit updated formula and cask
+      - name: Commit and push to the tap
+        working-directory: tap
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/pux.rb Casks/pux-bar.rb
-          git diff --staged --quiet || git commit -m "chore: bump homebrew formula and cask to $(node -p "require('./package.json').version")"
+          git diff --staged --quiet || git commit -m "chore: bump pux formula and pux-bar cask to $(node -p "require('../package.json').version")"
           git push

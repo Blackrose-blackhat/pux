@@ -33,7 +33,8 @@ export function Install() {
         <p className="text-muted text-xs uppercase tracking-wide">npm</p>
         <CopyBlock command="npm install -g pux.sh" />
         <p className="text-muted text-xs uppercase tracking-wide mt-4">homebrew</p>
-        <CopyBlock command="brew install Blackrose-blackhat/pux/pux" />
+        <CopyBlock command="brew install --cask Blackrose-blackhat/pux/pux-bar" />
+        <p className="text-muted text-xs mt-2">Installs the notch bar and the CLI. CLI only: <code>brew install Blackrose-blackhat/pux/pux</code></p>
       </div>
       <div className="space-y-3 w-full mt-8">
         <p className="text-muted text-xs uppercase tracking-wide">then run</p>

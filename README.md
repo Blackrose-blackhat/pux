@@ -121,23 +121,22 @@ npm link
 Or with Homebrew:
 
 ```sh
-brew tap Blackrose-blackhat/pux https://github.com/Blackrose-blackhat/pux
-brew install pux
+brew install Blackrose-blackhat/pux/pux
 ```
 
 **Requirements:** Node.js 22+ and the [GitHub CLI](https://cli.github.com/) (`gh`) authenticated. The CLI runs on macOS, Linux, and Windows; the notch bar app is macOS 14+ only. [Vercel CLI](https://vercel.com/docs/cli) is optional and enables deployment watching.
 
 The notch bar app is available for macOS 14+; the engine still runs as a CLI everywhere else.
 
-### Menu bar app (macOS)
+### Notch bar app (macOS)
 
-The notch bar shows your CI status in the MacBook notch. Install it with the cask (it depends on the `pux` formula):
+The notch bar shows your CI status in the MacBook notch. One command installs the app and the `pux` CLI it runs on:
 
 ```sh
 brew install --cask Blackrose-blackhat/pux/pux-bar
 ```
 
-The cask becomes installable with the first release that publishes `Pux-<version>.zip`; its sha is bumped automatically.
+Both live in the [Blackrose-blackhat/homebrew-pux](https://github.com/Blackrose-blackhat/homebrew-pux) tap, which CI bumps after every release. The cask becomes installable with the first release that publishes `Pux-<version>.zip`.
 
 The app is ad-hoc signed, not notarized, so macOS blocks the first launch. On macOS 15 or newer, open System Settings → Privacy & Security after the blocked launch and click "Open Anyway", or clear the quarantine flag:
 
