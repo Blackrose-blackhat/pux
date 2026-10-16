@@ -205,7 +205,7 @@ repo. Never on success. Toggle in settings, default on.
 | --- | --- |
 | `pux` not installed | `engineMissing`: panel shows `brew install Blackrose-blackhat/pux/pux` with Copy |
 | Engine exits | restart with backoff; after three fast exits, `engineOffline` with the last stderr line |
-| Provider unavailable (gh not logged in, no remote) | engine sends `state` with the existing `unavailable` snapshot; tab shows "GitHub CLI not authenticated" style text |
+| Provider unavailable (gh not logged in, no remote) | the worker re-detects on each poll until providers and the repository are available, and reports `error` "GitHub CLI not installed or not authenticated (run `gh auth login`), or no GitHub remote" |
 | Registry path missing | removed on load, `error` event, tab disappears |
 | Fix fails or agent missing | `fix-done` with the existing failure result, shown inline in the CLI's wording |
 | Display has no notch | pill at top center of the menu bar, everything else identical |
@@ -270,5 +270,11 @@ real failure end to end.
   Testing do not link. Unit tests live in a `PuxCoreCheck` executable target
   with a 30-line assertion runner (`swift run PuxCoreCheck`, exit 1 on failure)
   and run the same way in CI.
+- **The window prefers the notched screen.** The notch window goes on the
+  screen that has a notch (non-zero top safe-area inset) rather than
+  `NSScreen.main`, which follows keyboard focus and can be an external display.
+- **Capture is retried up to 3 times.** GitHub's log endpoint can lag a
+  completed run, so a failed capture is retried on the next poll, up to three
+  attempts, before the worker gives up with one `error`.
 - **Cask name.** A cask and a formula cannot share the name `pux` in one tap,
   so the app ships as cask `pux-bar`.

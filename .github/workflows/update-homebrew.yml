@@ -4,13 +4,15 @@ on:
   workflow_run:
     workflows: ["Publish to npm"]
     types: [completed]
+  # Manual re-run, e.g. to redo the cask sha after the release asset was uploaded late.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   update-formula:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

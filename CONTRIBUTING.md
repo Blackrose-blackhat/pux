@@ -71,7 +71,7 @@ Priority order:
 1. Engine reliability (context generation, log parsing)
 2. Smarter context (parse errors for file references)
 3. Push detection (file watcher on `.git/refs`)
-4. Menu bar app (Tauri shell)
+4. Notch bar app (native Swift, `macos/`)
 
 ## What NOT to Build
 

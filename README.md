@@ -137,11 +137,15 @@ The notch bar shows your CI status in the MacBook notch. Install it with the cas
 brew install --cask Blackrose-blackhat/pux/pux-bar
 ```
 
-The app is ad-hoc signed, so the first launch needs right-click → Open, or clear the quarantine flag:
+The cask becomes installable with the first release that publishes `Pux-<version>.zip`; its sha is bumped automatically.
+
+The app is ad-hoc signed, not notarized, so macOS blocks the first launch. On macOS 15 or newer, open System Settings → Privacy & Security after the blocked launch and click "Open Anyway", or clear the quarantine flag:
 
 ```sh
 xattr -d com.apple.quarantine /Applications/Pux.app
 ```
+
+On macOS 14, right-click → Open also works.
 
 Running `pux watch` in a repository registers it with the bar and launches the app if it's installed. While both the TUI and the bar are running, they each poll CI, so the same repository is polled twice.
 

@@ -7,7 +7,7 @@ cask "pux-bar" do
   desc "Notch bar for Pux: shows CI failures in the MacBook notch"
   homepage "https://github.com/Blackrose-blackhat/pux"
 
-  depends_on formula: "pux"
+  depends_on formula: "Blackrose-blackhat/pux/pux"
   depends_on macos: ">= :sonoma"
 
   app "Pux.app"
@@ -17,9 +17,12 @@ cask "pux-bar" do
   ]
 
   caveats <<~EOS
-    Pux.app is ad-hoc signed, not notarized. On first launch macOS will block it:
-    right-click the app and choose Open, or clear the quarantine flag:
+    Pux.app is ad-hoc signed, not notarized, so macOS blocks the first launch.
+    On macOS 15 or newer, open System Settings → Privacy & Security after the
+    blocked launch and click "Open Anyway", or clear the quarantine flag:
 
       xattr -d com.apple.quarantine /Applications/Pux.app
+
+    On macOS 14, right-click the app and choose Open also works.
   EOS
 end
