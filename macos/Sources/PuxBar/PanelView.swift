@@ -87,7 +87,8 @@ struct PanelView: View {
         .frame(height: 18)
     }
 
-    /// The footer line: fix progress, then re-run progress, then the repo's last error, then the engine version.
+    /// The footer line: fix progress, then re-run progress, then the repo's last error, then
+    /// "N repos watched" (while the engine runs) and the engine version.
     static func status(_ state: AppState, _ repo: RepoState?) -> (text: String, color: Color) {
         let dim = Color.white.opacity(0.4)
         if let repo, case .running = state.engine, !state.showingSettings {
@@ -100,8 +101,10 @@ struct PanelView: View {
             if case let .done(ok) = repo.rerun { return ok ? ("Re-run triggered", Palette.green) : ("Re-run failed", Palette.red) }
             if let error = repo.lastError { return (error, Palette.red) }
         }
-        if case let .running(version) = state.engine, !version.isEmpty { return ("pux \(version)", dim) }
-        return ("pux", dim)
+        guard case let .running(version) = state.engine else { return ("pux", dim) }
+        let count = state.repos.count
+        let watched = "\(count) \(count == 1 ? "repo" : "repos") watched"
+        return (version.isEmpty ? "\(watched) · pux" : "\(watched) · pux \(version)", dim)
     }
 }
 

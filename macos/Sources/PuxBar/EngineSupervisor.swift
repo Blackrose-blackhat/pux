@@ -60,14 +60,25 @@ final class EngineSupervisor {
         return nil
     }
 
-    /// The inherited environment with Homebrew's and /usr/local's bin directories appended to
-    /// PATH, so `gh`, `git` and `node` resolve when the app is launched from Finder.
-    nonisolated static func engineEnvironment() -> [String: String] {
+    /// The inherited environment with a PATH that finds `node` 22, `gh` and `git` when the app is
+    /// launched from Finder. In order, deduplicated (first occurrence wins):
+    /// 1. Homebrew's keg-only `node@22` (`/opt/homebrew/opt/node@22/bin`, `/usr/local/opt/node@22/bin`),
+    ///    which the `pux` formula depends on and does not link into `bin`;
+    /// 2. the directory holding `pux` itself, then the directory of its resolved target, so an
+    ///    npm-global install (nvm, `npm prefix -g`) finds the `node` it was installed with;
+    /// 3. the inherited PATH;
+    /// 4. `/opt/homebrew/bin` and `/usr/local/bin`.
+    nonisolated static func engineEnvironment(pux: URL?) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        var parts = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(separator: ":").map(String.init)
-        for extra in ["/opt/homebrew/bin", "/usr/local/bin"] where !parts.contains(extra) {
-            parts.append(extra)
+        var front = ["/opt/homebrew/opt/node@22/bin", "/usr/local/opt/node@22/bin"]
+        if let pux {
+            front.append(pux.deletingLastPathComponent().path)
+            front.append(pux.resolvingSymlinksInPath().deletingLastPathComponent().path)
         }
+        let inherited = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(separator: ":").map(String.init)
+        var seen = Set<String>()
+        let parts = (front + inherited + ["/opt/homebrew/bin", "/usr/local/bin"])
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
         env["PATH"] = parts.joined(separator: ":")
         return env
     }
@@ -77,7 +88,7 @@ final class EngineSupervisor {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = arguments
-        process.environment = engineEnvironment()
+        process.environment = engineEnvironment(pux: nil)
         let out = Pipe()
         process.standardOutput = out
         process.standardError = FileHandle.nullDevice
@@ -147,7 +158,7 @@ final class EngineSupervisor {
         let process = Process()
         process.executableURL = url
         process.arguments = ["serve"]
-        process.environment = Self.engineEnvironment()
+        process.environment = Self.engineEnvironment(pux: url)
         let current = Run(process: process)
         process.standardInput = current.stdin
         process.standardOutput = current.stdout

@@ -109,7 +109,8 @@ private func reduceEvent(_ s: inout AppState, _ event: ServeEvent, now: Date) {
     case let .failure(path, pipeline, contextPath, errorWindow, failedStep, exitCode):
         upsert(&s, path) { repo in
             repo.failure = RepoFailure(pipeline: pipeline, contextPath: contextPath, errorWindow: errorWindow, failedStep: failedStep, exitCode: exitCode)
-            repo.fix = .idle
+            // A fix already running finishes and reports on its own; only a settled one is cleared.
+            if case .running = repo.fix {} else { repo.fix = .idle }
             repo.rerun = .idle
             repo.recovering = false
         }

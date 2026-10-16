@@ -359,4 +359,13 @@ check("describe matches the CLI wording") {
   try expectEqual(describe(.error(message: "agent crashed")), "agent crashed")
 }
 
+check("a failure while a fix is running keeps the fix running") {
+  var s = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed]), failureEvent("/a")])
+  s = apply([.engineEvent(.fixProgress(repo: "/a", stage: "agent", agent: "Claude Code")), failureEvent("/a")], from: s)
+  try expectEqual(s.repos[0].fix, .running(stage: "agent", agent: "Claude Code"))
+  // A finished fix is still cleared by a new failure.
+  s = apply([.engineEvent(.fixDone(repo: "/a", result: .error(message: "x"))), failureEvent("/a")], from: s)
+  try expectEqual(s.repos[0].fix, .idle)
+}
+
 finish()

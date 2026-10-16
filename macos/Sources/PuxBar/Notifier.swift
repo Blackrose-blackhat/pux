@@ -15,33 +15,63 @@ final class Notifier {
     private let prefs: Preferences
     private let delegate: Delegate
     private var authorizationRequested = false
+    private var authorizationPending = false
+    /// Failures that arrived while the authorization prompt was still open, newest per repo.
+    private var queued: [String: UNNotificationRequest] = [:]
 
     init(prefs: Preferences, onOpen: @escaping @MainActor (String) -> Void) {
         self.prefs = prefs
         delegate = Delegate(onOpen: onOpen)
-        if let center = Self.center() { center.delegate = delegate }
+        guard let center = Self.center() else { return }
+        center.delegate = delegate
+        // Ask up front: asking at the first failure would leave that failure without a banner.
+        if prefs.notifications { requestAuthorization(center) }
     }
 
     /// Notifies about `repo`'s current failure: title the repository (or the folder name), body
     /// "<pipeline> › <failed step>". One notification per repo; a newer one replaces it.
     func failure(repo: RepoState) {
         guard prefs.notifications, let failure = repo.failure, let center = Self.center() else { return }
-        if !authorizationRequested {
-            authorizationRequested = true
-            center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-                if let error {
-                    Self.logger.error("notification authorization failed: \(String(describing: error), privacy: .public)")
-                } else if !granted {
-                    Self.logger.info("notifications not allowed by the user")
-                }
-            }
-        }
         let content = UNMutableNotificationContent()
         content.title = repo.repository ?? URL(fileURLWithPath: repo.path).lastPathComponent
         content.body = "\(failure.pipeline.name) › \(failure.failedStep ?? "failed")"
         content.sound = .default
         content.userInfo = ["repo": repo.path]
         let request = UNNotificationRequest(identifier: repo.path, content: content, trigger: nil)
+        // Notifications were off at launch and turned on since: ask now.
+        if !authorizationRequested { requestAuthorization(center) }
+        if authorizationPending {
+            queued[repo.path] = request
+        } else {
+            Self.post(request, to: center)
+        }
+    }
+
+    private func requestAuthorization(_ center: UNUserNotificationCenter) {
+        authorizationRequested = true
+        authorizationPending = true
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            if let error {
+                Self.logger.error("notification authorization failed: \(String(describing: error), privacy: .public)")
+            } else if !granted {
+                Self.logger.info("notifications not allowed by the user")
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.authorizationSettled(granted: granted) }
+            }
+        }
+    }
+
+    /// Posts the failures that arrived while the prompt was open.
+    private func authorizationSettled(granted: Bool) {
+        authorizationPending = false
+        let pending = queued.values
+        queued.removeAll()
+        guard granted, prefs.notifications, let center = Self.center() else { return }
+        for request in pending { Self.post(request, to: center) }
+    }
+
+    private static func post(_ request: UNNotificationRequest, to center: UNUserNotificationCenter) {
         center.add(request) { error in
             if let error {
                 Self.logger.error("could not post notification: \(String(describing: error), privacy: .public)")
