@@ -274,6 +274,47 @@ check("rerun that passes after building still glows green") {
   try expectEqual(apply([.tick(t0 + 6), stateEvent("/a", "u/a", [.completed])], from: s).mood, .idle)
 }
 
+check("failure while peeking keeps the panel peeking") {
+  let peeking = apply([reposEvent([("/a", "u/a"), ("/b", "u/b")]), stateEvent("/a", "u/a", [.completed]), stateEvent("/b", "u/b", [.completed]),
+                       .hoverEntered])
+  try expectEqual(peeking.panel, .peeking)
+  try expectEqual(peeking.selectedRepo, "/a")
+  let s = apply([stateEvent("/b", "u/b", [.failed]), failureEvent("/b")], from: peeking)
+  try expectEqual(s.panel, .peeking)
+  try expectEqual(s.selectedRepo, "/b")
+  try expectEqual(s.mood, .failed)
+  // An already dropped panel restarts its timer on a second failure.
+  let first = apply([.hoverLeft, failureEvent("/b")], from: peeking)
+  try expectEqual(first.panel, .autoDropped(until: t0 + 5))
+  let again = apply([failureEvent("/a")], from: first, now: t0 + 3)
+  try expectEqual(again.panel, .autoDropped(until: t0 + 8))
+}
+
+check("global error before hello goes offline, after hello is ignored") {
+  let started = apply([.engineStarted])
+  try expectEqual(started.engine, .running(version: ""))
+  try expectEqual(apply([.engineEvent(.error(repo: nil, message: "boom"))], from: started).engine, .offline(reason: "boom"))
+  try expectEqual(apply([.engineEvent(.error(repo: nil, message: "boom"))]).engine, .offline(reason: "boom"))
+  let hello = apply([.engineEvent(.hello(version: "0.1.5"))], from: started)
+  try expectEqual(apply([.engineEvent(.error(repo: nil, message: "boom"))], from: hello).engine, .running(version: "0.1.5"))
+}
+
+check("removing the auto-dropped repo collapses the panel") {
+  let dropped = apply([reposEvent([("/a", "u/a"), ("/b", "u/b")]), stateEvent("/b", "u/b", [.failed]), failureEvent("/b")])
+  try expectEqual(dropped.panel, .autoDropped(until: t0 + 5))
+  let s = apply([reposEvent([("/a", "u/a")])], from: dropped)
+  try expectEqual(s.panel, .collapsed)
+  try expectEqual(s.selectedRepo, "/a")
+  // Removing some other repo leaves the drop alone; pinned and peeking are never touched.
+  try expectEqual(apply([reposEvent([("/b", "u/b")])], from: dropped).panel, .autoDropped(until: t0 + 5))
+  try expectEqual(apply([.notchClicked, reposEvent([("/a", "u/a")])], from: dropped).panel, .pinned)
+  try expectEqual(apply([.hoverEntered, reposEvent([("/a", "u/a")])], from: dropped).panel, .peeking)
+  // Duplicate paths in one event collapse to the first occurrence.
+  let dup = apply([.engineEvent(.repos([RepoSummary(repo: "/a", repository: "u/a", addedAt: "x"), RepoSummary(repo: "/a", repository: "u/z", addedAt: "y")]))])
+  try expectEqual(dup.repos.map(\.path), ["/a"])
+  try expectEqual(dup.repos[0].repository, "u/a")
+}
+
 check("engine errors, consent and fix progress land on their repo") {
   let plan = AgentPlan(entries: [AgentPlanEntry(agent: "Claude Code", path: "CLAUDE.md", action: "append")])
   var s = apply([reposEvent([("/a", "u/a")]), stateEvent("/a", "u/a", [.failed, .queued, .completed]), failureEvent("/a")])

@@ -62,13 +62,17 @@ private func reduceEvent(_ s: inout AppState, _ event: ServeEvent, now: Date) {
 
     case let .repos(summaries):
         let existing = Dictionary(s.repos.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        s.repos = summaries.map { summary in
+        var seen = Set<String>()
+        s.repos = summaries.compactMap { summary in
+            guard seen.insert(summary.repo).inserted else { return nil }
             var repo = existing[summary.repo] ?? RepoState(path: summary.repo)
             repo.repository = summary.repository
             return repo
         }
         sortRepos(&s)
         if s.selectedRepo.map({ path in !s.repos.contains { $0.path == path } }) ?? true {
+            // The repo the panel dropped open for is gone: close it rather than show another.
+            if s.selectedRepo != nil, case .autoDropped = s.panel { s.panel = .collapsed }
             s.selectedRepo = s.repos.first?.path
         }
 
@@ -110,7 +114,13 @@ private func reduceEvent(_ s: inout AppState, _ event: ServeEvent, now: Date) {
             repo.recovering = false
         }
         sortRepos(&s)
-        if s.panel != .pinned {
+        switch s.panel {
+        case .pinned:
+            break
+        case .peeking:
+            // The pointer is on the panel already: show the failure there without a timer.
+            s.selectedRepo = path
+        case .collapsed, .autoDropped:
             s.panel = .autoDropped(until: now + Timing.autoDrop)
             s.selectedRepo = path
         }
@@ -132,8 +142,8 @@ private func reduceEvent(_ s: inout AppState, _ event: ServeEvent, now: Date) {
     case let .error(path?, message):
         update(&s, path) { $0.lastError = message }
     case let .error(nil, message):
-        // A global error before the engine is up means it never started properly.
-        if s.engine == .starting { s.engine = .offline(reason: message) }
+        // A global error before hello means the engine never started properly.
+        if s.engine == .starting || s.engine == .running(version: "") { s.engine = .offline(reason: message) }
     }
 }
 
