@@ -2,7 +2,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { configPath, loadConfig, saveConfig, setRepoDecision } from "./store.js";
+import {
+  addWatchedRepo,
+  configPath,
+  listWatchedRepos,
+  loadConfig,
+  removeWatchedRepo,
+  saveConfig,
+  setRepoDecision,
+} from "./store.js";
 
 let dir: string;
 
@@ -40,5 +48,27 @@ describe("config store", () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "config.json"), "{not json");
     expect(await loadConfig()).toEqual({ repos: {} });
+  });
+});
+
+describe("watched repos", () => {
+  it("adds a repo once and keeps the first addedAt", async () => {
+    await addWatchedRepo("/tmp/a", "u/a", new Date("2026-10-16T10:00:00Z"));
+    await addWatchedRepo("/tmp/a", "u/a", new Date("2026-10-17T10:00:00Z"));
+    expect(await listWatchedRepos()).toEqual({ "/tmp/a": { repository: "u/a", addedAt: "2026-10-16T10:00:00.000Z" } });
+  });
+
+  it("removes a repo without touching other config", async () => {
+    await saveConfig({ repos: { "u/a": { agentFiles: true } } });
+    await addWatchedRepo("/tmp/a", "u/a");
+    await addWatchedRepo("/tmp/b", null);
+    await removeWatchedRepo("/tmp/a");
+    const config = await loadConfig();
+    expect(Object.keys(config.watched ?? {})).toEqual(["/tmp/b"]);
+    expect(config.repos).toEqual({ "u/a": { agentFiles: true } });
+  });
+
+  it("lists nothing when the key is absent", async () => {
+    expect(await listWatchedRepos()).toEqual({});
   });
 });

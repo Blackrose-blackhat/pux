@@ -22,7 +22,7 @@ async function main() {
     process.exit(1);
   }
 
-  const confirm = await ask(`\nThis will bump ${bump.trim()}, build, and publish to npm. Continue? [Y/n] `);
+  const confirm = await ask(`\nThis will bump ${bump.trim()}, build, publish to npm, push the commit and tag, and create the GitHub release with the Pux.app bundle. Continue? [Y/n] `);
   if (confirm.trim().toLowerCase() !== "y" && confirm.trim() !== "") {
     console.log("Aborted.");
     process.exit(0);
@@ -40,7 +40,11 @@ async function main() {
   run(`git add package.json`);
   run(`git commit -m "${pkg.version}"`);
   run(`git tag v${pkg.version}`);
-  console.log(`\n\x1b[33mDon't forget: git push && git push --tags\x1b[0m`);
+
+  run("git push && git push --tags");
+  run("bash macos/scripts/build-app.sh");
+  run(`gh release create v${pkg.version} macos/Pux-${pkg.version}.zip --title v${pkg.version} --generate-notes`);
+  console.log(`\n\x1b[32m✓ Released v${pkg.version}: https://github.com/Blackrose-blackhat/pux/releases/tag/v${pkg.version}\x1b[0m`);
 }
 
 main();

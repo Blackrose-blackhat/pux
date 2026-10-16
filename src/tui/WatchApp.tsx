@@ -16,6 +16,7 @@ import { command } from "../github/client.js";
 import { detectProviders, type MissingDependency, type Pipeline, type Provider, type ProviderSnapshot } from "../providers/index.js";
 import { Pet, type PetMood } from "./Pet.js";
 import { pollIntervalFor } from "./polling.js";
+import { registerAndLaunch } from "../serve/register.js";
 import { autoUpdateLine } from "../utils/auto-update.js";
 
 const execFileAsync = promisify(execFile);
@@ -91,6 +92,12 @@ export function WatchApp() {
       providersRef.current = providers;
       setRepository(repo);
       setCommit(sha);
+      // Silently add this repo to the notch bar's watch list and launch the app if installed.
+      if (repo) {
+        void command("git", ["rev-parse", "--show-toplevel"])
+          .then((root) => (root ? registerAndLaunch(root, repo) : undefined))
+          .catch(() => undefined);
+      }
 
       if (missing.length > 0) {
         setMissingDeps(missing);

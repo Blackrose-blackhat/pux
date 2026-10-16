@@ -4,13 +4,15 @@ on:
   workflow_run:
     workflows: ["Publish to npm"]
     types: [completed]
+  # Manual re-run, e.g. to redo the cask sha after the release asset was uploaded late.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   update-formula:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,10 +26,31 @@ jobs:
           sed -i "s|url \".*\"|url \"${URL}\"|" Formula/pux.rb
           sed -i "s|sha256 \".*\"|sha256 \"${SHA}\"|" Formula/pux.rb
 
-      - name: Commit updated formula
+      - name: Update cask from release asset
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          URL="https://github.com/Blackrose-blackhat/pux/releases/download/v${VERSION}/Pux-${VERSION}.zip"
+          FOUND=0
+          for i in $(seq 1 10); do
+            if curl -fsIL "$URL" > /dev/null; then
+              FOUND=1
+              break
+            fi
+            echo "Release asset not available yet (attempt ${i}/10), waiting 30s"
+            sleep 30
+          done
+          if [ "$FOUND" -ne 1 ]; then
+            echo "::warning::Release asset ${URL} never appeared; skipping cask update"
+            exit 0
+          fi
+          SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
+          sed -i "s|^  version \".*\"|  version \"${VERSION}\"|" Casks/pux-bar.rb
+          sed -i "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" Casks/pux-bar.rb
+
+      - name: Commit updated formula and cask
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/pux.rb
-          git diff --staged --quiet || git commit -m "chore: bump homebrew formula to $(node -p "require('./package.json').version")"
+          git add Formula/pux.rb Casks/pux-bar.rb
+          git diff --staged --quiet || git commit -m "chore: bump homebrew formula and cask to $(node -p "require('./package.json').version")"
           git push
