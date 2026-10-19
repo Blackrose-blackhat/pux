@@ -18,6 +18,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var openProgress: CGFloat = 0
     @Published private(set) var reduceMotion: Bool
     @Published var layout: NotchLayout
+    /// The result of the last add (picker, drop or debug flag) for the footer; cleared after
+    /// `addRepoMessageDuration`. `addRepoFailed` picks its colour.
+    @Published private(set) var addRepoMessage: String?
+    @Published private(set) var addRepoFailed = false
+    /// A drag with files is over the notch: the panel body says "Drop to watch".
+    @Published private(set) var dropHint = false
     let engine: EngineSupervisor
     let prefs = Preferences()
     /// Posts a notification for each failure the engine reports; set by the app delegate.
@@ -28,6 +34,7 @@ final class AppModel: ObservableObject {
 
     private var pointerInside = false
     private var hoverLeaveTimer: DispatchWorkItem?
+    private var addRepoMessageTimer: DispatchWorkItem?
     private var displayOptionsObserver: NSObjectProtocol?
 
     init(layout: NotchLayout, locate: @escaping () -> URL? = EngineSupervisor.locatePux) {
@@ -50,6 +57,8 @@ final class AppModel: ObservableObject {
         displayOptionsObserver = nil
         hoverLeaveTimer?.cancel()
         hoverLeaveTimer = nil
+        addRepoMessageTimer?.cancel()
+        addRepoMessageTimer = nil
         onPanelChange = nil
     }
 
@@ -63,6 +72,8 @@ final class AppModel: ObservableObject {
             withAnimation(reduceMotion ? Self.reducedMotionAnimation : Self.openAnimation) { openProgress = open }
         }
         if old.panel != next.panel { onPanelChange?(old.panel, next.panel) }
+        // A missed draggingExited must not leave "Drop to watch" behind a collapsed panel.
+        if next.panel == .collapsed { dropHint = false }
         if case let .engineEvent(.failure(path, _, _, _, _, _)) = action,
            let repo = next.repos.first(where: { $0.path == path }) {
             notifier?.failure(repo: repo)
@@ -151,6 +162,129 @@ final class AppModel: ObservableObject {
     func openFromNotification(repo path: String) {
         dispatch(.tabSelected(path))
         if state.panel != .pinned { dispatch(.notchClicked) }
+    }
+
+    // MARK: - Adding repositories
+
+    static let addRepoMessageDuration: TimeInterval = 6
+
+    /// Opens a folder picker (non-modal, so the notch keeps drawing) and adds each chosen folder.
+    /// Pins the panel first so it doesn't retract under the picker.
+    func addRepository() {
+        if state.panel != .pinned { dispatch(.notchClicked) }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Watch"
+        panel.message = "Choose a repository to watch"
+        panel.begin { [weak self, panel] response in
+            guard response == .OK else { return }
+            let urls = panel.urls
+            MainActor.assumeIsolated { self?.addRepositories(urls) }
+        }
+        // An accessory app isn't active on its own; without this the picker opens behind other windows.
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// Adds each in turn, in order (each footer message replaces the last).
+    func addRepositories(_ urls: [URL]) {
+        Task {
+            for url in urls { await addRepository(at: url) }
+        }
+    }
+
+    /// Adds the repository containing `url` (its root, so a subfolder registers the repo) to the
+    /// engine's watch list. The engine sees the file change and adds the tab; the footer says how it went.
+    func addRepository(at url: URL) async {
+        let name = url.lastPathComponent
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            showAddRepo("\(name) is not a folder", failed: true)
+            return
+        }
+        switch await RepoProbe.probe(url.path) {
+        case .notGit:
+            showAddRepo("\(name) is not a Git repository", failed: true)
+        case .noGitHubRemote:
+            showAddRepo("\(name) has no GitHub remote", failed: true)
+        case let .ok(root, repository):
+            let label = repository ?? URL(fileURLWithPath: root).lastPathComponent
+            let file = Registry.configURL()
+            do {
+                try await Self.addWatched(root: root, repository: repository, file: file)
+                showAddRepo("Watching \(label)", failed: false)
+            } catch RegistryError.alreadyWatched {
+                showAddRepo("Already watching \(label)", failed: false)
+            } catch {
+                Self.logger.error("could not update \(file.path, privacy: .public): \(String(describing: error), privacy: .public)")
+                let shown = (file.path as NSString).abbreviatingWithTildeInPath
+                showAddRepo("Could not update \(shown): \(error.localizedDescription)", failed: true)
+            }
+        }
+    }
+
+    /// Reads config.json (missing is empty), adds the entry, writes it back atomically. Writes go
+    /// through a symlinked config.json to its target, as the engine's `writeFile` does.
+    ///
+    /// An existing file is never replaced unless it parses: one that can't be read, or holds text
+    /// that isn't a JSON object, is an error. The engine's saveConfig truncates then writes, so a
+    /// read can land mid-write; a file that doesn't parse is read once more after 100 ms.
+    private static func addWatched(root: String, repository: String?, file: URL) async throws {
+        let target = file.resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        func read() throws -> String {
+            guard FileManager.default.fileExists(atPath: target.path) else { return "" }
+            return String(decoding: try Data(contentsOf: target), as: UTF8.self)
+        }
+        func usable(_ text: String) -> Bool {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || Registry.parsesAsObject(text)
+        }
+        var existing = try read()
+        if !usable(existing) {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            existing = try read()
+            guard usable(existing) else { throw ConfigNotJSON() }
+        }
+        let text = try Registry.adding(path: root, repository: repository, now: Date(), to: existing)
+        try Data(text.utf8).write(to: target, options: .atomic)
+    }
+
+    private struct ConfigNotJSON: LocalizedError {
+        var errorDescription: String? { "config.json is not valid JSON" }
+    }
+
+    private func showAddRepo(_ message: String, failed: Bool) {
+        addRepoMessage = message
+        addRepoFailed = failed
+        addRepoMessageTimer?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.addRepoMessage = nil
+                self?.addRepoMessageTimer = nil
+            }
+        }
+        addRepoMessageTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.addRepoMessageDuration, execute: work)
+    }
+
+    // MARK: - Drag and drop (called by the window)
+
+    /// A drag carrying files came over the notch (true) or left without dropping (false).
+    /// Repeats are ignored, so the end of a drag can report false whether or not it dropped.
+    func dragHover(_ inside: Bool) {
+        guard inside != dropHint else { return }
+        dropHint = inside
+        dispatch(inside ? .hoverEntered : .hoverLeft)
+    }
+
+    /// Files were dropped on the notch: add each one (non-folders are refused with a message).
+    /// Pins the panel so the footer message stays in view after the pointer leaves.
+    func dropped(_ urls: [URL]) {
+        dropHint = false
+        if state.panel != .pinned { dispatch(.notchClicked) }
+        addRepositories(urls)
     }
 
     private static func copy(_ text: String) {

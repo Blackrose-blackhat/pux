@@ -7,6 +7,10 @@ import PuxCore
 /// over the panel while it is open, so the menu bar and windows beside a collapsed notch keep
 /// working. Pointer position is checked on every mouse move: a global monitor sees moves while
 /// the window ignores the mouse, the tracking area and a local monitor while it doesn't.
+///
+/// Folders dragged onto the notch are added to the watch list. Drags don't produce mouse moves,
+/// so a global `.leftMouseDragged` monitor keeps pass-through current during a drag (and only
+/// that: the drag destination reports hover itself).
 final class NotchWindow: NSPanel {
     /// Transparent margin around `layout.windowFrame` so the blur and the spring's overshoot are
     /// not clipped by the window edge. The top stays flush with the screen.
@@ -23,6 +27,10 @@ final class NotchWindow: NSPanel {
     /// Returns whether the key press was used.
     var onEscape: (() -> Bool)?
     var onClickOutside: (() -> Void)?
+    /// A drag with file URLs entered (true) or left without dropping (false).
+    var onDragHover: ((Bool) -> Void)?
+    /// File URLs dropped on the window.
+    var onDrop: (([URL]) -> Void)?
 
     private let trackingView = TrackingView()
     private var monitors: [Any] = []
@@ -44,6 +52,9 @@ final class NotchWindow: NSPanel {
         ignoresMouseEvents = true
 
         trackingView.onMouse = { [weak self] in self?.refreshPointer() }
+        trackingView.onDragHover = { [weak self] in self?.onDragHover?($0) }
+        trackingView.onDrop = { [weak self] in self?.onDrop?($0) }
+        trackingView.registerForDraggedTypes([.fileURL])
         contentView = trackingView
     }
 
@@ -116,9 +127,15 @@ final class NotchWindow: NSPanel {
 
     /// Re-evaluates mouse pass-through and hover for the current pointer position.
     func refreshPointer() {
+        onPointerInside?(refreshPassThrough())
+    }
+
+    /// Re-evaluates mouse pass-through only; returns whether the pointer is over Pux.
+    @discardableResult
+    func refreshPassThrough() -> Bool {
         let inside = isInteractive(NSEvent.mouseLocation)
         if ignoresMouseEvents == inside { ignoresMouseEvents = !inside }
-        onPointerInside?(inside)
+        return inside
     }
 
     // MARK: - Event monitors
@@ -132,6 +149,10 @@ final class NotchWindow: NSPanel {
         if let m = NSEvent.addLocalMonitorForEvents(matching: moves, handler: { [weak self] event in
             MainActor.assumeIsolated { self?.refreshPointer() }
             return event
+        }) { monitors.append(m) }
+        // A drag from another app (Finder) must reach the window over the notch to be dropped.
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged, handler: { [weak self] _ in
+            MainActor.assumeIsolated { _ = self?.refreshPassThrough() }
         }) { monitors.append(m) }
 
         // Clicks that reach another app are outside the panel by definition; the check guards
@@ -152,7 +173,8 @@ final class NotchWindow: NSPanel {
         }) { monitors.append(m) }
 
         if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard event.keyCode == 53 else { return event }   // Esc
+            // Only the notch's own Esc: in the folder picker it must cancel the picker.
+            guard event.keyCode == 53, event.window === self else { return event }   // Esc
             let used = MainActor.assumeIsolated { self?.onEscape?() ?? false }
             return used ? nil : event
         }) { monitors.append(m) }
@@ -173,9 +195,12 @@ final class NotchWindow: NSPanel {
     }
 }
 
-/// The content view: reports mouse enter, exit and moves over the whole window.
+/// The content view: reports mouse enter, exit and moves over the whole window, and takes
+/// file drops.
 private final class TrackingView: NSView {
     var onMouse: (() -> Void)?
+    var onDragHover: ((Bool) -> Void)?
+    var onDrop: (([URL]) -> Void)?
     private var area: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -190,4 +215,45 @@ private final class TrackingView: NSView {
     override func mouseEntered(with event: NSEvent) { onMouse?() }
     override func mouseExited(with event: NSEvent) { onMouse?() }
     override func mouseMoved(with event: NSEvent) { onMouse?() }
+
+    // MARK: Dropping folders
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard !Self.fileURLs(sender).isEmpty else { return [] }
+        onDragHover?(true)
+        return Self.operation(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(sender).isEmpty ? [] : Self.operation(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onDragHover?(false)
+    }
+
+    /// A drag cancelled over the window may end without an exit; clears the hint (a no-op after a drop).
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        onDragHover?(false)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.fileURLs(sender)
+        guard !urls.isEmpty else { return false }
+        onDrop?(urls)
+        return true
+    }
+
+    private static func fileURLs(_ info: NSDraggingInfo) -> [URL] {
+        let objects = info.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                          options: [.urlReadingFileURLsOnly: true])
+        return (objects as? [URL]) ?? []
+    }
+
+    /// Copy when the source allows it (the "+" badge), else whatever it offers.
+    private static func operation(_ info: NSDraggingInfo) -> NSDragOperation {
+        let mask = info.draggingSourceOperationMask
+        for op: NSDragOperation in [.copy, .link, .generic] where mask.contains(op) { return op }
+        return []
+    }
 }

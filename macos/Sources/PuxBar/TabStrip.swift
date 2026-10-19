@@ -1,11 +1,12 @@
 import PuxCore
 import SwiftUI
 
-/// One pill per repo with a status dot; scrolls sideways past six repos.
+/// One pill per repo with a status dot, then a "+" pill to add one; scrolls sideways past six repos.
 struct TabStrip: View {
     var repos: [RepoState]
     var selected: String?
     var onSelect: (String) -> Void
+    var onAdd: () -> Void
 
     static let scrollThreshold = 6
 
@@ -41,6 +42,19 @@ struct TabStrip: View {
                 .buttonStyle(.plain)
                 .help(repo.repository ?? repo.path)
             }
+            Button(action: onAdd) {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.65))
+                    .padding(.horizontal, 9)
+                    .frame(height: 22)
+                    .fixedSize()
+                    .background(Capsule().fill(Color.white.opacity(0.06)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Add repository")
+            .accessibilityLabel(Text("Add repository"))
         }
     }
 
